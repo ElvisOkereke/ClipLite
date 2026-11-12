@@ -76,6 +76,9 @@ enum Cmd {
     ElevatedHelper {
         #[arg(long)]
         pipe: String,
+        /// Only this process may connect (the harness that requested elevation).
+        #[arg(long)]
+        client_pid: u32,
     },
 }
 
@@ -99,7 +102,8 @@ mod win {
     use cliplite_testkit::clip;
     use cliplite_testkit::elevated::{serve, sibling_exe, Helper};
     use cliplite_testkit::harness::{
-        ensure_foreground, launch_game, list_mp4, tools_in, wait_new_clips, Game, Harness, DEFAULT_CHORD, RECORD_START_CHORD,
+        capture_alive, collect_trial_clips, ensure_foreground, launch_game, list_mp4, tools_in, Game, Harness,
+        DEFAULT_CHORD, RECORD_START_CHORD,
         RECORD_STOP_CHORD,
     };
     use cliplite_testkit::{bench, procmon, soak};
@@ -107,7 +111,9 @@ mod win {
     use std::io::Write;
     use std::time::Instant;
     use cliplite_testkit::job::Job;
-    use cliplite_testkit::matrix::{cells, evaluate_trial, summary_markdown, CpuLoad, TrialResult};
+    use cliplite_testkit::matrix::{
+        apply_context, cells, evaluate_trial, read_json_logs, stages_for_trial, summary_markdown, CpuLoad, TrialResult,
+    };
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -127,7 +133,7 @@ mod win {
                 println!("self-test PASS (validator flags black clips, accepts test pattern)");
                 Ok(())
             }
-            Cmd::ElevatedHelper { pipe } => serve(&pipe, &sibling_exe("fakegame.exe")?),
+            Cmd::ElevatedHelper { pipe, client_pid } => serve(&pipe, &sibling_exe("fakegame.exe")?, client_pid),
         }
     }
 
@@ -161,8 +167,8 @@ mod win {
         Ok(app.canonicalize().with_context(|| format!("app not found: {}", app.display()))?.parent().unwrap().to_path_buf())
     }
 
-    fn refuse_if_foreign_capture(app: &Path) -> Result<()> {
-        let foreign = procmon::foreign_capture(&app_dir_of(app)?);
+    fn refuse_if_foreign_capture() -> Result<()> {
+        let foreign = procmon::foreign_capture();
         if !foreign.is_empty() {
             anyhow::bail!(
                 "another ClipLite is capturing and would skew the numbers — stop its replay buffer/recording first:\n  {}",
@@ -172,13 +178,6 @@ mod win {
         Ok(())
     }
 
-    fn fresh_dir(dir: &Path) -> Result<()> {
-        if dir.exists() {
-            std::fs::remove_dir_all(dir).with_context(|| format!("clear {}", dir.display()))?;
-        }
-        std::fs::create_dir_all(dir)?;
-        Ok(())
-    }
 
     fn csv(path: &Path, header: &str) -> Result<std::io::BufWriter<std::fs::File>> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
@@ -187,8 +186,8 @@ mod win {
     }
 
     fn soak(app: &Path, hours: f64, save_every_mins: f64, sample_every_secs: u64, warmup_mins: f64, out: &Path) -> Result<()> {
-        refuse_if_foreign_capture(app)?;
-        fresh_dir(out)?;
+        refuse_if_foreign_capture()?;
+        cliplite_testkit::harness::prepare_out(out)?;
         let fakegame = sibling_exe("fakegame.exe")?;
         let started_at = chrono::Local::now().to_rfc3339();
         let harness = Harness::start(app, out, 60, DEFAULT_CHORD)?;
@@ -230,16 +229,22 @@ mod win {
             if t >= next_save {
                 ensure_foreground(game.hwnd);
                 let before = harness.list_clips();
+                let alive = capture_alive(harness.pid());
+                let chord_at = chrono::Utc::now();
+                // saves are minutes apart: expect (almost) the full buffer
+                let expected_min_s = (save_s.min(60.0) - 2.0).max(1.0);
                 let r = match cliplite_testkit::input::send_chord(&harness.chord) {
                     Err(_) => TrialResult::failed("input_blocked"),
                     Ok(()) => {
-                        let (new, latency) = wait_new_clips(&harness.clips, &before, Duration::from_secs(90));
+                        let (new, latency) = collect_trial_clips(&harness.clips, &before, Duration::from_secs(90), Duration::from_secs(5));
                         let report = if new.len() == 1 { clip::validate(&ffprobe, &ffmpeg, &new[0]).ok() } else { None };
-                        let mut r = evaluate_trial(&new, report.as_ref(), 3.0);
+                        let mut r = evaluate_trial(&new, report.as_ref(), expected_min_s);
                         r.latency_ms = latency;
                         r
                     }
                 };
+                let mut r = apply_context(r, false, false, alive);
+                r.stages = stages_for_trial(&read_json_logs(&harness.home), chord_at - chrono::Duration::milliseconds(500));
                 writeln!(
                     saves_csv,
                     "{t:.1},{},{},{},{},{}",
@@ -326,8 +331,8 @@ mod win {
     }
 
     fn bench(app: &Path, runs: usize, duration_secs: u64, mode: &str, gpu_load: u8, out: &Path) -> Result<()> {
-        refuse_if_foreign_capture(app)?;
-        fresh_dir(out)?;
+        refuse_if_foreign_capture()?;
+        cliplite_testkit::harness::prepare_out(out)?;
         let app_dir = app_dir_of(app)?;
         let fakegame = sibling_exe("fakegame.exe")?;
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
@@ -335,17 +340,26 @@ mod win {
         let started_at = chrono::Local::now().to_rfc3339();
         let mut scenarios = serde_json::Map::new();
 
-        for scenario in ["baseline", "replay", "replay_record"] {
-            let harness = if scenario == "baseline" { None } else { Some(Harness::start(app, &out.join(scenario), 60, DEFAULT_CHORD)?) };
+        // Warm-up: one unmeasured run so GPU clocks and temperatures settle.
+        println!("warm-up run ({duration_secs} s, not measured)");
+        let warm: Vec<String> = vec!["--mode".into(), mode.into(), "--gpu-load".into(), gpu_load.to_string(), "--duration-secs".into(), duration_secs.to_string()];
+        if let Ok(mut g) = launch_game(&job, &fakegame, &warm) {
+            let _ = g.child.wait();
+        }
+
+        let order = bench::run_order(runs);
+        let mut by_scenario: std::collections::BTreeMap<&str, Vec<serde_json::Value>> = Default::default();
+        for &(k, scenario) in &order {
+            let run_dir = out.join(scenario).join(format!("run{k}"));
+            std::fs::create_dir_all(&run_dir)?;
+            let harness = if scenario == "baseline" { None } else { Some(Harness::start(app, &run_dir, 60, DEFAULT_CHORD)?) };
             // Hotkeys are not delivered while ClipLite's own window has focus, and
             // people game with it in the tray anyway: hide it before any chord.
             if let Some(h) = &harness {
                 h.set_window(cliplite_testkit::matrix::WindowState::Hidden)?;
             }
-            let mut results = Vec::new();
-            for k in 1..=runs {
-                let run_dir = out.join(scenario).join(format!("run{k}"));
-                std::fs::create_dir_all(&run_dir)?;
+            let results = by_scenario.entry(scenario).or_default();
+            {
                 let mut note = None;
                 if scenario == "replay_record" {
                     let h = harness.as_ref().unwrap();
@@ -432,13 +446,16 @@ mod win {
                 std::thread::sleep(Duration::from_secs(3));
             }
             drop(harness);
-            scenarios.insert(scenario.into(), serde_json::Value::Array(results));
+        }
+        for (k, v) in by_scenario {
+            scenarios.insert(k.into(), serde_json::Value::Array(v));
         }
         let report = serde_json::json!({
             "build": { "app_path": app, "git_sha": std::env::var("GIT_SHA").unwrap_or_else(|_| "unknown".into()) },
             "machine": machine_info(),
             "started_at": started_at,
-            "params": { "runs": runs, "duration_secs": duration_secs, "mode": mode, "gpu_load": gpu_load, "warmup_skip_ms": 2000 },
+            "params": { "runs": runs, "duration_secs": duration_secs, "mode": mode, "gpu_load": gpu_load, "warmup_skip_ms": 2000, "warmup_run": true },
+            "order": order.iter().map(|(k, s)| format!("{k}:{s}")).collect::<Vec<_>>(),
             "scenarios": scenarios,
         });
         std::fs::write(out.join("bench.json"), serde_json::to_vec_pretty(&report)?)?;
@@ -446,11 +463,7 @@ mod win {
     }
 
     fn matrix(app: &Path, trials: usize, elevated: bool, chord: &str, buffer_secs: u32, out: &Path) -> Result<()> {
-        std::fs::create_dir_all(out)?;
-        let home = out.join("home");
-        if home.exists() {
-            std::fs::remove_dir_all(&home).context("clear previous harness home")?;
-        }
+        cliplite_testkit::harness::prepare_out(out)?;
         let fakegame = sibling_exe("fakegame.exe")?;
         let started_at = chrono::Local::now().to_rfc3339();
         println!("starting ClipLite in test mode: {}", app.display());
@@ -479,6 +492,7 @@ mod win {
                     .map(|s| s.to_string())
                     .collect();
 
+                let game_ready = Instant::now();
                 let (running, fullscreen, focused) = match helper.as_mut() {
                     Some(h) => {
                         let (pid, _hwnd, fs, focused) = h.launch_fakegame(args)?;
@@ -492,10 +506,16 @@ mod win {
                     }
                 };
 
+                let mut alive_at_chord = true;
+                let mut chord_at = chrono::Utc::now();
                 let mut result = if !focused {
                     TrialResult::failed("no_focus")
                 } else {
                     std::thread::sleep(Duration::from_secs(5));
+                    alive_at_chord = capture_alive(harness.pid());
+                    chord_at = chrono::Utc::now();
+                    // the clip must cover the in-game time before the chord (−1 s margin)
+                    let expected_min_s = (game_ready.elapsed().as_secs_f64() - 1.0).max(1.0);
                     let sent = match helper.as_mut() {
                         Some(h) => h.send_chord(chord),
                         None => cliplite_testkit::input::send_chord(chord),
@@ -503,14 +523,15 @@ mod win {
                     if sent.is_err() {
                         TrialResult::failed("input_blocked")
                     } else {
-                        let (new, latency) = wait_new_clips(&harness.clips, &before, Duration::from_secs(15));
+                        let (new, latency) = collect_trial_clips(&harness.clips, &before, Duration::from_secs(15), Duration::from_secs(5));
                         let report = if new.len() == 1 { clip::validate(&ffprobe, &ffmpeg, &new[0]).ok() } else { None };
-                        let mut r = evaluate_trial(&new, report.as_ref(), 3.0);
+                        let mut r = evaluate_trial(&new, report.as_ref(), expected_min_s);
                         r.latency_ms = latency;
                         r
                     }
                 };
-                result.fullscreen = Some(fullscreen);
+                result = apply_context(result, cell.mode == "exclusive", fullscreen, alive_at_chord);
+                result.stages = stages_for_trial(&read_json_logs(&harness.home), chord_at - chrono::Duration::milliseconds(500));
 
                 match running {
                     Running::Local(g) => g.close(),

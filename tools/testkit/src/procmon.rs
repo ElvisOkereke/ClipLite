@@ -33,19 +33,7 @@ pub fn sample(names: &[&str], dir: &Path) -> Vec<ProcSample> {
 /// Sample `roots` and all their descendants — for ClipLite that is the UI
 /// process, its WebView2 renderers, the recorder and its FFmpeg children.
 pub fn sample_tree(roots: &[u32]) -> Vec<ProcSample> {
-    let all = list_processes();
-    let mut keep: Vec<u32> = roots.iter().copied().filter(|r| all.iter().any(|p| p.pid == *r)).collect();
-    let mut i = 0;
-    while i < keep.len() {
-        let parent = keep[i];
-        for p in &all {
-            if p.parent == parent && p.pid != parent && !keep.contains(&p.pid) {
-                keep.push(p.pid);
-            }
-        }
-        i += 1;
-    }
-    all.iter().filter(|p| keep.contains(&p.pid)).filter_map(measure).collect()
+    roots.iter().flat_map(|r| crate::job::descendants(*r)).filter_map(|p| measure(&p)).collect()
 }
 
 fn measure(p: &crate::job::ProcInfo) -> Option<ProcSample> {
@@ -72,12 +60,12 @@ fn measure(p: &crate::job::ProcInfo) -> Option<ProcSample> {
     }
 }
 
-/// Any capture running from a ClipLite install *other* than `dir` (it would skew numbers).
-pub fn foreign_capture(dir: &Path) -> Vec<String> {
-    let mine: Vec<u32> = crate::job::processes_under(dir).iter().map(|p| p.pid).collect();
+/// Any ClipLite capture already running (called before the harness starts its
+/// own app, so every recorder found belongs to someone else and would skew numbers).
+pub fn foreign_capture() -> Vec<String> {
     list_processes()
         .into_iter()
-        .filter(|p| p.name.eq_ignore_ascii_case("cliplite-recorder.exe") && !mine.contains(&p.pid))
+        .filter(|p| p.name.eq_ignore_ascii_case("cliplite-recorder.exe"))
         .map(|p| format!("{} (pid {}) {}", p.name, p.pid, p.path.map(|x| x.display().to_string()).unwrap_or_default()))
         .collect()
 }

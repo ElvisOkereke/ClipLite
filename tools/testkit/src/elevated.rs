@@ -45,9 +45,58 @@ pub struct Response {
     pub focused: Option<bool>,
 }
 
-/// Pipe security: full access for Everyone at medium integrity, so the
-/// non-elevated harness can write to a pipe created by an elevated process.
-const PIPE_SDDL: &str = "D:(A;;GA;;;WD)S:(ML;;NW;;;ME)";
+/// Pipe security: full access for the given user SID only (protected DACL),
+/// labelled medium integrity so that user's non-elevated harness can write to
+/// a pipe created by the elevated helper.
+pub fn pipe_sddl(user_sid: &str) -> String {
+    format!("D:P(A;;GA;;;{user_sid})S:(ML;;NW;;;ME)")
+}
+
+/// Only the fake-game options the harness uses, with checked values: the
+/// helper runs elevated, so it must not accept e.g. `--frametimes <any path>`.
+pub fn validate_game_args(args: &[String]) -> Result<()> {
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--vsync" => {}
+            "--mode" => match it.next().map(String::as_str) {
+                Some("windowed" | "borderless" | "exclusive") => {}
+                other => bail!("disallowed --mode value {other:?}"),
+            },
+            "--gpu-load" | "--cpu-threads" | "--duration-secs" | "--width" | "--height" => {
+                let v = it.next().ok_or_else(|| anyhow!("{flag} needs a value"))?;
+                if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+                    bail!("{flag} must be a number, got {v:?}");
+                }
+            }
+            other => bail!("disallowed fake-game argument {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+/// String SID of the current process's user (same for elevated and not).
+fn current_user_sid() -> Result<String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+        let mut buf = vec![0u8; len as usize];
+        GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr() as *mut _), len, &mut len)?;
+        let _ = windows::Win32::Foundation::CloseHandle(token);
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut s = windows::core::PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut s)?;
+        let out = s.to_string()?;
+        let _ = LocalFree(HLOCAL(s.0 as _));
+        Ok(out)
+    }
+}
 
 // ── client (harness side) ─────────────────────────────────────────────────────
 
@@ -63,7 +112,7 @@ impl Helper {
         use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
         let pipe = format!("cliplite_hil_{}", std::process::id());
         let file = HSTRING::from(hil_exe.as_os_str());
-        let params = HSTRING::from(format!("elevated-helper --pipe {pipe}"));
+        let params = HSTRING::from(format!("elevated-helper --pipe {pipe} --client-pid {}", std::process::id()));
         let verb = HSTRING::from("runas");
         let mut info = SHELLEXECUTEINFOW {
             cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -142,14 +191,14 @@ fn open_pipe_client(path: &str) -> Result<HANDLE> {
 // ── server (elevated side) ────────────────────────────────────────────────────
 
 /// Entry point for `hil elevated-helper --pipe NAME`.
-pub fn serve(pipe: &str, fakegame: &Path) -> Result<()> {
+pub fn serve(pipe: &str, fakegame: &Path, client_pid: u32) -> Result<()> {
     use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
     use windows::Win32::System::Pipes::*;
 
     let mut sd = PSECURITY_DESCRIPTOR::default();
-    let sddl = HSTRING::from(PIPE_SDDL);
+    let sddl = HSTRING::from(pipe_sddl(&current_user_sid()?));
     unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None)? };
     let sa = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -160,7 +209,7 @@ pub fn serve(pipe: &str, fakegame: &Path) -> Result<()> {
     let handle = unsafe {
         CreateNamedPipeW(
             PCWSTR(name.as_ptr()),
-            PIPE_ACCESS_DUPLEX,
+            PIPE_ACCESS_DUPLEX | windows::Win32::Storage::FileSystem::FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             1,
             64 * 1024,
@@ -173,6 +222,16 @@ pub fn serve(pipe: &str, fakegame: &Path) -> Result<()> {
         bail!("CreateNamedPipeW failed");
     }
     unsafe { ConnectNamedPipe(handle, None).or_else(|e| if e.code().0 as u32 == 0x80070217 { Ok(()) } else { Err(e) })? };
+    // Serve only the harness that launched us.
+    let mut connected_pid = 0u32;
+    unsafe { GetNamedPipeClientProcessId(handle, &mut connected_pid)? };
+    if connected_pid != client_pid {
+        unsafe {
+            let _ = DisconnectNamedPipe(handle);
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
+        }
+        bail!("pipe client pid {connected_pid} is not the harness ({client_pid}); refusing");
+    }
     let f = unsafe { File::from_raw_handle(handle.0 as _) };
     let mut writer = f.try_clone()?;
     let reader = BufReader::new(f);
@@ -202,6 +261,7 @@ pub fn serve(pipe: &str, fakegame: &Path) -> Result<()> {
 fn handle_request(req: Request, job: &Job, fakegame: &Path, games: &mut HashMap<u32, Game>) -> Result<Response> {
     match req {
         Request::LaunchFakegame { args } => {
+            validate_game_args(&args)?;
             let game = launch_game(job, fakegame, &args)?;
             let focused = ensure_foreground(game.hwnd);
             let r = Response {
@@ -248,6 +308,22 @@ mod tests {
         assert_eq!(s, r#"{"op":"send_chord","chord":"Ctrl+F"}"#);
         let r: Request = serde_json::from_str(r#"{"op":"launch_fakegame","args":["--mode","exclusive"]}"#).unwrap();
         assert_eq!(r, Request::LaunchFakegame { args: vec!["--mode".into(), "exclusive".into()] });
+    }
+
+    #[test]
+    fn pipe_acl_grants_only_the_given_user() {
+        let sddl = pipe_sddl("S-1-5-21-1-2-3-1001");
+        assert_eq!(sddl, "D:P(A;;GA;;;S-1-5-21-1-2-3-1001)S:(ML;;NW;;;ME)");
+        assert!(!sddl.contains(";WD)"), "must not grant Everyone");
+    }
+
+    #[test]
+    fn game_args_are_whitelisted() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        assert!(validate_game_args(&v(&["--mode", "exclusive", "--gpu-load", "50", "--cpu-threads", "16"])).is_ok());
+        assert!(validate_game_args(&v(&["--mode", "exclusive", "--frametimes", r"C:\Windows\x.csv"])).is_err());
+        assert!(validate_game_args(&v(&["--mode", "evil"])).is_err());
+        assert!(validate_game_args(&v(&["--gpu-load", "50;rm"])).is_err());
     }
 
     #[test]

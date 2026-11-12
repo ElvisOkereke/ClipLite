@@ -399,7 +399,7 @@ npx tauri dev    # starts Vite dev server + Rust watcher, auto-reloads on change
 ### Production build
 ```powershell
 cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri\apps\desktop"
-npx tauri build
+npm run bundle   # release recorder + app; installer ships cliplite-recorder.exe and FFmpeg
 # Outputs:
 #   target/release/cliplite.exe
 #   target/release/cliplite-recorder.exe

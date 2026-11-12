@@ -1,7 +1,7 @@
 //! Drives a ClipLite build from the outside: isolated app dir, test-mode
 //! launch, window control, fake-game launch and focus.
 #![cfg(windows)]
-use crate::job::{kill_pid, processes_under, Job};
+use crate::job::{descendants, kill_and_wait, processes_under, Job};
 use crate::matrix::WindowState;
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::{BufRead, BufReader};
@@ -30,6 +30,9 @@ pub struct Harness {
     pub ready_at: Instant,
     child: Child,
     _job: Job,
+    _tree_job: std::sync::Arc<Job>,
+    adopter_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    adopted: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
 }
 
 /// Audio devices for the isolated settings. A real user typically has system
@@ -80,19 +83,50 @@ pub fn app_env(home: &Path) -> Vec<(&'static str, PathBuf)> {
     ]
 }
 
-fn kill_app_procs(app_dir: &Path) {
-    for p in processes_under(app_dir) {
-        if APP_PROCS.iter().any(|n| p.name.eq_ignore_ascii_case(n)) {
-            kill_pid(p.pid);
+/// Marker written into every `--out` folder the harness creates; folders
+/// without it are never cleared.
+pub const OUT_MARKER: &str = ".hil-out";
+
+/// Make `dir` an empty harness output folder. Refuses a non-empty folder that
+/// the harness did not create, so a mistyped `--out` can't wipe real data.
+pub fn prepare_out(dir: &Path) -> Result<()> {
+    if dir.exists() {
+        let non_empty = std::fs::read_dir(dir)?.next().is_some();
+        if non_empty && !dir.join(OUT_MARKER).exists() {
+            bail!(
+                "refusing to use {}: it is not empty and was not created by hil (no {OUT_MARKER}). Pick a new folder.",
+                dir.display()
+            );
+        }
+        if non_empty {
+            std::fs::remove_dir_all(dir).with_context(|| format!("clear {}", dir.display()))?;
         }
     }
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join(OUT_MARKER), b"created by cliplite hil\n")?;
+    Ok(())
+}
+
+fn app_procs_under(app_dir: &Path) -> Vec<crate::job::ProcInfo> {
+    processes_under(app_dir).into_iter().filter(|p| APP_PROCS.iter().any(|n| p.name.eq_ignore_ascii_case(n))).collect()
 }
 
 impl Harness {
     pub fn start(app: &Path, out: &Path, buffer_secs: u32, chord: &str) -> Result<Harness> {
         let app = app.canonicalize().with_context(|| format!("app not found: {}", app.display()))?;
         let app_dir = app.parent().unwrap().to_path_buf();
-        kill_app_procs(&app_dir); // stale processes from an earlier crashed run
+        // Never kill what we didn't start: a ClipLite already running from this
+        // folder may be the owner's daily app (and its recording).
+        let mut existing = app_procs_under(&app_dir);
+        let wait_from = Instant::now();
+        while !existing.is_empty() && wait_from.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(200)); // a previous harness's processes may still be exiting
+            existing = app_procs_under(&app_dir);
+        }
+        if !existing.is_empty() {
+            let list: Vec<String> = existing.iter().map(|p| format!("{} (pid {})", p.name, p.pid)).collect();
+            bail!("ClipLite is already running from {}: {}. Close it first.", app_dir.display(), list.join(", "));
+        }
 
         // absolute, so the app (and its child processes) never see relative paths
         let out = std::path::absolute(out)?;
@@ -110,9 +144,29 @@ impl Harness {
                 .stderr(Stdio::null()),
         )?;
 
+        // The recorder breaks away from `job`; adopt every descendant into a
+        // second kill-on-close job so an aborted harness can't orphan capture.
+        let tree_job = std::sync::Arc::new(Job::new_kill_on_close(false)?);
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let adopted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u32>::new()));
+        {
+            let (tree_job, stop, root, adopted) = (tree_job.clone(), stop.clone(), child.id(), adopted.clone());
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    for p in descendants(root) {
+                        let mut a = adopted.lock().unwrap();
+                        if p.pid != root && !a.contains(&p.pid) && tree_job.assign(p.pid).is_ok() {
+                            a.push(p.pid);
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+            });
+        }
+
         let t0 = Instant::now();
         loop {
-            let up = processes_under(&app_dir).iter().any(|p| p.name.eq_ignore_ascii_case("cliplite-recorder.exe"));
+            let up = descendants(child.id()).iter().any(|p| p.name.eq_ignore_ascii_case("cliplite-recorder.exe"));
             if up {
                 break;
             }
@@ -122,7 +176,18 @@ impl Harness {
             std::thread::sleep(Duration::from_millis(250));
         }
         std::thread::sleep(Duration::from_secs(10)); // let the buffer fill and the UI poll sync
-        Ok(Harness { app_dir, home, clips, chord: chord.to_string(), ready_at: Instant::now(), child, _job: job })
+        Ok(Harness {
+            app_dir,
+            home,
+            clips,
+            chord: chord.to_string(),
+            ready_at: Instant::now(),
+            child,
+            _job: job,
+            _tree_job: tree_job,
+            adopter_stop: stop,
+            adopted,
+        })
     }
 
     pub fn pid(&self) -> u32 {
@@ -160,8 +225,22 @@ impl Harness {
 
 impl Drop for Harness {
     fn drop(&mut self) {
+        self.adopter_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Only our own process tree (children first); never anything else
+        // that happens to live in the same folder.
+        // Current tree plus everything ever adopted (an FFmpeg whose recorder
+        // already exited is no longer reachable by parent pid), then wait until
+        // they are really gone so the next harness starts clean.
+        let mut pids: Vec<u32> = descendants(self.child.id()).iter().map(|p| p.pid).collect();
+        for p in self.adopted.lock().unwrap().iter() {
+            if !pids.contains(p) {
+                pids.push(*p);
+            }
+        }
         let _ = self.child.kill();
-        kill_app_procs(&self.app_dir); // the recorder breaks away from the job
+        if !kill_and_wait(&pids, Duration::from_secs(10)) {
+            eprintln!("warning: some ClipLite test processes did not exit within 10 s: {pids:?}");
+        }
     }
 }
 
@@ -325,6 +404,22 @@ impl Game {
     }
 }
 
+/// `wait_new_clips`, then keep watching for `grace` so a late second file
+/// (a duplicate save from one press) is attributed to this trial.
+pub fn collect_trial_clips(dir: &Path, before: &[PathBuf], timeout: Duration, grace: Duration) -> (Vec<PathBuf>, Option<u64>) {
+    let (new, latency) = wait_new_clips(dir, before, timeout);
+    if new.is_empty() {
+        return (new, latency);
+    }
+    std::thread::sleep(grace);
+    (list_mp4(dir).into_iter().filter(|p| !before.contains(p)).collect(), latency)
+}
+
+/// Whether FFmpeg is running in `root`'s process tree (i.e. capture is alive).
+pub fn capture_alive(root: u32) -> bool {
+    descendants(root).iter().any(|p| p.name.eq_ignore_ascii_case("ffmpeg.exe"))
+}
+
 /// Wait up to `timeout` for new files (not in `before`) whose size is stable
 /// for 1 s. Returns them and the latency to the first appearance.
 pub fn wait_new_clips(dir: &Path, before: &[PathBuf], timeout: Duration) -> (Vec<PathBuf>, Option<u64>) {
@@ -365,6 +460,23 @@ mod tests {
     }
 
     #[test]
+    fn prepare_out_refuses_foreign_folders_and_clears_its_own() {
+        let dir = std::env::temp_dir().join("clip lite prepare out test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("precious.mp4"), b"keep me").unwrap();
+        assert!(prepare_out(&dir).is_err(), "must refuse a non-empty folder it did not create");
+        assert!(dir.join("precious.mp4").exists());
+
+        let fresh = dir.join("fresh");
+        prepare_out(&fresh).unwrap();
+        std::fs::write(fresh.join("old.csv"), b"x").unwrap();
+        prepare_out(&fresh).unwrap(); // its own marker → cleared
+        assert!(!fresh.join("old.csv").exists());
+        assert!(fresh.join(OUT_MARKER).exists());
+    }
+
+    #[test]
     fn parses_ready_line() {
         assert_eq!(parse_ready("READY hwnd=0x1a2b fullscreen=true"), Some((0x1a2b, true)));
         assert_eq!(parse_ready("READY hwnd=0x10 fullscreen=false"), Some((0x10, false)));
@@ -390,6 +502,23 @@ mod tests {
         assert_eq!(v["replay_output_dir"], r"C:\x y\clips");
         assert_eq!(v["hotkeys"]["start"], RECORD_START_CHORD);
         assert_eq!(v["hotkeys"]["stop"], RECORD_STOP_CHORD);
+    }
+
+    #[test]
+    fn grace_window_catches_a_late_duplicate() {
+        let dir = std::env::temp_dir().join("clip lite grace test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = list_mp4(&dir);
+        let d2 = dir.clone();
+        std::thread::spawn(move || {
+            std::fs::write(d2.join("a.mp4"), b"first").unwrap();
+            std::thread::sleep(Duration::from_millis(2500));
+            std::fs::write(d2.join("b.mp4"), b"second").unwrap();
+        });
+        let (new, lat) = collect_trial_clips(&dir, &before, Duration::from_secs(5), Duration::from_secs(4));
+        assert!(lat.is_some());
+        assert_eq!(new.len(), 2, "late duplicate missed: {new:?}");
     }
 
     #[test]

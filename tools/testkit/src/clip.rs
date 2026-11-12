@@ -10,6 +10,9 @@ pub struct ClipReport {
     pub has_audio: bool,
     /// blackdetect covers ≥ 90% of the duration (capture saw nothing).
     pub black: bool,
+    /// The last 3 s contain a ≥ 2 s freeze. The fake game animates every
+    /// frame, so a freeze means capture stalled or died.
+    pub frozen_tail: bool,
 }
 
 fn no_window(cmd: &mut Command) -> &mut Command {
@@ -28,6 +31,11 @@ pub fn total_black_seconds(stderr: &str) -> f64 {
         .filter_map(|tok| tok.strip_prefix("black_duration:"))
         .filter_map(|v| v.parse::<f64>().ok())
         .sum()
+}
+
+/// Whether ffmpeg `freezedetect` output reports a freeze.
+pub fn has_freeze(stderr: &str) -> bool {
+    stderr.contains("freeze_start")
 }
 
 pub fn validate(ffprobe: &Path, ffmpeg: &Path, file: &Path) -> Result<ClipReport> {
@@ -52,11 +60,20 @@ pub fn validate(ffprobe: &Path, ffmpeg: &Path, file: &Path) -> Result<ClipReport
         .context("run ffmpeg blackdetect")?;
     let black_s = total_black_seconds(&String::from_utf8_lossy(&bd.stderr));
 
+    let fz = no_window(&mut Command::new(ffmpeg))
+        .args(["-hide_banner", "-nostats", "-sseof", "-3", "-i"])
+        .arg(file)
+        .args(["-vf", "freezedetect=n=0.001:d=2", "-an", "-f", "null", "-"])
+        .output()
+        .context("run ffmpeg freezedetect")?;
+    let frozen_tail = has_freeze(&String::from_utf8_lossy(&fz.stderr));
+
     Ok(ClipReport {
         duration_s,
         has_video: has("video"),
         has_audio: has("audio"),
         black: duration_s > 0.0 && black_s >= 0.9 * duration_s,
+        frozen_tail,
     })
 }
 
@@ -76,8 +93,9 @@ pub fn self_test(ffmpeg_dir: &Path) -> Result<()> {
             return Err(anyhow!("ffmpeg failed generating {name}"));
         }
         let r = validate(&ffprobe, &ffmpeg, &f)?;
-        if !r.has_video || (r.duration_s - 3.0).abs() > 0.2 || r.black != want_black {
-            return Err(anyhow!("{name}: unexpected report {r:?} (want black={want_black})"));
+        // a static colour is also frozen; testsrc2 moves every frame
+        if !r.has_video || (r.duration_s - 3.0).abs() > 0.2 || r.black != want_black || r.frozen_tail != want_black {
+            return Err(anyhow!("{name}: unexpected report {r:?} (want black={want_black}, frozen={want_black})"));
         }
     }
     Ok(())
@@ -93,6 +111,14 @@ mod tests {
                  [blackdetect @ 0] black_start:2 black_end:3.25 black_duration:1.25";
         assert!((total_black_seconds(s) - 2.75).abs() < 1e-9);
         assert_eq!(total_black_seconds("no matches here"), 0.0);
+    }
+
+    #[test]
+    fn detects_freeze_in_freezedetect_output() {
+        let frozen = "[freezedetect @ 0] lavfi.freezedetect.freeze_start: 0.5
+[freezedetect @ 0] lavfi.freezedetect.freeze_duration: 2.5";
+        assert!(has_freeze(frozen));
+        assert!(!has_freeze("frame=  90 fps=0.0 q=-0.0 size=N/A"));
     }
 
     /// Needs ffmpeg/ffprobe; run via `hil self-test`, or set CLIPLITE_FFMPEG_DIR.

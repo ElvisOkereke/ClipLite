@@ -47,14 +47,16 @@ Exclusive fullscreen was not benchmarked. There, the baseline's capture can die 
 - **Disk:** the replay temp file grows to about 138 MB per 10 minutes, then resets on each save (because of the stop-and-restart).
 - **Saves: 11/11 produced clips, but each took 21.2–21.35 s** and gave 70–72 s instead of the 60 s requested. The harness's then-20 s wait marked these as `no_file` in `soak.json`/`saves.csv`. The real latencies were reconstructed from the hotkey timestamps in `home/debug.log` and the clip completion times, and are in `soak/saves_reconstructed.json`.
 
-**Equal-age comparison (save latency after 10 min of buffering):**
+**Equal-age comparison (save latency after 10 min of buffering).** Latency here means *hotkey press → clip file finished*:
+- **Baseline:** the `[hotkeys] FIRED` timestamp in `debug.log`, compared with the clip file's last-write time.
+- **Phase 1:** the `hotkey.pressed` and `replay.saved` log events, which share the same `cid`.
 
-| Build | Save latency | Clip length (60 s requested) |
-|---|---|---|
-| Baseline | 21.2 s (every save) | 70–72 s |
-| Phase 1 WS0 (FFmpeg stderr drained) | 0.75 s, 0.25 s | 61.2–61.6 s |
+| Build | Hotkey → clip finished | Clip length (60 s requested) | Data |
+|---|---|---|---|
+| Baseline | 21.2–21.35 s (11/11 saves) | 70–72 s | `soak/saves_reconstructed.json` |
+| Phase 1 WS0 (FFmpeg stderr drained) | 0.29 s, 0.71 s | 61.2–61.6 s | `../phase1-ws0-checks/phase1-soak-10min/` |
 
-At 4 minutes both builds save in under 1 s (`soak-4min/`).
+The harness's own `latency_ms` measures something else: *chord → clip file first appears*, polled every 250 ms. At a 4-minute buffer age both builds save in under 1 s on that measure (`soak-4min/`, `../phase1-ws0-checks/phase1-soak-check/`). So the stall appears somewhere between 4 and 10 minutes of buffering.
 
 ## Findings handed to WS1–WS3
 

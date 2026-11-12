@@ -37,6 +37,14 @@ pub fn summarize(frametimes_ms: &[f64]) -> FrameStats {
     }
 }
 
+pub const SCENARIOS: [&str; 3] = ["baseline", "replay", "replay_record"];
+
+/// Interleaved run order: round k runs every scenario once, rotated by k, so
+/// slow drift (GPU boost/thermals) spreads across scenarios instead of biasing one.
+pub fn run_order(runs: usize) -> Vec<(usize, &'static str)> {
+    (1..=runs).flat_map(|k| (0..SCENARIOS.len()).map(move |i| (k, SCENARIOS[(i + k - 1) % SCENARIOS.len()]))).collect()
+}
+
 /// CPU usage as a percentage of one core.
 pub fn core_pct(cpu_time_ms: u64, wall_s: f64) -> f64 {
     if wall_s <= 0.0 {
@@ -56,6 +64,17 @@ pub fn cpu_pct(cpu_time_ms: u64, wall_s: f64, logical_cores: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_order_interleaves_and_rotates() {
+        let o = run_order(3);
+        assert_eq!(o.len(), 9);
+        for sc in SCENARIOS {
+            assert_eq!(o.iter().filter(|(_, s)| *s == sc).count(), 3);
+        }
+        assert_eq!(&o[0..3], &[(1, "baseline"), (1, "replay"), (1, "replay_record")]);
+        assert_eq!(&o[3..6], &[(2, "replay"), (2, "replay_record"), (2, "baseline")]);
+    }
 
     #[test]
     fn frame_stats() {

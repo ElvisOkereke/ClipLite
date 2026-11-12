@@ -61,7 +61,7 @@ mod tests {
     const MB: u64 = 1024 * 1024;
 
     fn ok_save() -> TrialResult {
-        TrialResult { ok: true, failure: None, latency_ms: Some(500), file: None, duration_s: Some(60.0), fullscreen: None }
+        TrialResult { ok: true, failure: None, latency_ms: Some(500), duration_s: Some(60.0), ..TrialResult::failed("x") }
     }
     /// 2 h of samples every 5 s, value from `f(t_s)` in MB.
     fn series(f: impl Fn(f64) -> f64) -> Vec<(f64, u64)> {

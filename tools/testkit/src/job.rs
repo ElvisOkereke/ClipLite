@@ -36,6 +36,17 @@ impl Job {
         }
     }
 
+    /// Add an already-running process to this job (no-op error if it is gone).
+    pub fn assign(&self, pid: u32) -> Result<()> {
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+        unsafe {
+            let h = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)?;
+            let r = AssignProcessToJobObject(self.handle, h);
+            let _ = CloseHandle(h);
+            r.map_err(|e| anyhow!("AssignProcessToJobObject({pid}): {e}"))
+        }
+    }
+
     pub fn spawn(&self, cmd: &mut Command) -> Result<Child> {
         let child = cmd.spawn().with_context(|| format!("spawn {cmd:?}"))?;
         unsafe {
@@ -104,13 +115,36 @@ fn normalize(p: &Path) -> String {
     }
 }
 
-/// Processes whose image lives under `dir` (case-insensitive).
+/// Whether `path` lies inside `dir` (case-insensitive, `\\?\`-insensitive,
+/// and on a path-component boundary: `release` does not contain `release-x`).
+pub fn is_under(path: &Path, dir: &Path) -> bool {
+    let mut d = normalize(dir);
+    if !d.ends_with('\\') {
+        d.push('\\');
+    }
+    normalize(path).starts_with(&d)
+}
+
+/// Processes whose image lives under `dir`.
 pub fn processes_under(dir: &Path) -> Vec<ProcInfo> {
-    let d = normalize(dir);
-    list_processes()
-        .into_iter()
-        .filter(|p| p.path.as_ref().is_some_and(|x| normalize(x).starts_with(&d)))
-        .collect()
+    list_processes().into_iter().filter(|p| p.path.as_ref().is_some_and(|x| is_under(x, dir))).collect()
+}
+
+/// `root` and every process descended from it (by parent pid).
+pub fn descendants(root: u32) -> Vec<ProcInfo> {
+    let all = list_processes();
+    let mut keep: Vec<u32> = all.iter().filter(|p| p.pid == root).map(|p| p.pid).collect();
+    let mut i = 0;
+    while i < keep.len() {
+        let parent = keep[i];
+        for p in &all {
+            if p.parent == parent && p.pid != parent && !keep.contains(&p.pid) {
+                keep.push(p.pid);
+            }
+        }
+        i += 1;
+    }
+    all.into_iter().filter(|p| keep.contains(&p.pid)).collect()
 }
 
 pub fn kill_pid(pid: u32) {
@@ -120,6 +154,25 @@ pub fn kill_pid(pid: u32) {
             let _ = TerminateProcess(h, 1);
             let _ = CloseHandle(h);
         }
+    }
+}
+
+/// Terminate `pids` and wait (≤ `timeout`) until none is alive any more;
+/// TerminateProcess is asynchronous. Returns whether they all exited.
+pub fn kill_and_wait(pids: &[u32], timeout: std::time::Duration) -> bool {
+    for &p in pids {
+        kill_pid(p);
+    }
+    let t0 = std::time::Instant::now();
+    loop {
+        let live: Vec<u32> = list_processes().iter().map(|p| p.pid).collect();
+        if !pids.iter().any(|p| live.contains(p)) {
+            return true;
+        }
+        if t0.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -146,6 +199,33 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(!is_alive(pid), "child survived job close");
+    }
+
+    #[test]
+    fn kill_and_wait_returns_only_after_exit() {
+        let job = Job::new_kill_on_close(false).unwrap();
+        let a = job.spawn(Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null())).unwrap();
+        let b = job.spawn(Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null())).unwrap();
+        assert!(kill_and_wait(&[a.id(), b.id()], std::time::Duration::from_secs(5)));
+        assert!(!is_alive(a.id()) && !is_alive(b.id()), "returned before the processes were gone");
+    }
+
+    #[test]
+    fn under_requires_a_path_separator() {
+        assert!(is_under(Path::new(r"C:\a\target\release\cliplite.exe"), Path::new(r"C:\a\target\release")));
+        assert!(is_under(Path::new(r"c:\A\Target\Release\bin\ffmpeg.exe"), Path::new(r"\\?\C:\a\target\release\")));
+        assert!(!is_under(Path::new(r"C:\a\target\release-x\cliplite.exe"), Path::new(r"C:\a\target\release")));
+    }
+
+    #[test]
+    fn descendants_walks_the_tree_from_root_only() {
+        let job = Job::new_kill_on_close(false).unwrap();
+        let child = job.spawn(Command::new("cmd").args(["/c", "ping -n 20 127.0.0.1 >NUL"])).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let d = descendants(child.id());
+        assert!(d.iter().any(|p| p.pid == child.id()));
+        assert!(d.iter().any(|p| p.name.eq_ignore_ascii_case("PING.EXE")));
+        assert!(!d.iter().any(|p| p.pid == std::process::id()));
     }
 
     #[test]

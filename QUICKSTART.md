@@ -18,7 +18,7 @@ npx tauri dev
 
 ```powershell
 cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri\apps\desktop"
-npx tauri build
+npm run bundle   # release recorder + app; installer ships cliplite-recorder.exe and FFmpeg
 ```
 
 Outputs to `target/release/`. Both `cliplite.exe` and `cliplite-recorder.exe` must be in the same directory.

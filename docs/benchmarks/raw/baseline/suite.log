@@ -1,0 +1,138 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261112135523
+Username: <redacted>
+RunAs User: <redacted>
+Configuration Name: <redacted>
+Machine: <redacted>
+Host Application: <redacted>
+Process ID: 40636
+PSVersion: 5.1.19041.6456
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.19041.6456
+BuildVersion: 10.0.19041.6456
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+
+=== matrix  (13:55:23) ===
+starting ClipLite in test mode: Y:\CODING PROJECTS\LW_Clipper\cliplite-baseline\src-tauri\target\release\cliplite.exe
+windowed   Visible  Idle      trial 1/5: ok (250 ms, 15.5s clip)
+windowed   Visible  Idle      trial 2/5: ok (500 ms, 8.8s clip)
+windowed   Visible  Idle      trial 3/5: ok (752 ms, 8.8s clip)
+windowed   Visible  Idle      trial 4/5: ok (250 ms, 8.8s clip)
+windowed   Visible  Idle      trial 5/5: ok (501 ms, 8.8s clip)
+windowed   Visible  Saturated trial 1/5: ok (4836 ms, 9.9s clip)
+windowed   Visible  Saturated trial 2/5: ok (1007 ms, 11.2s clip)
+windowed   Visible  Saturated trial 3/5: ok (916 ms, 13.2s clip)
+windowed   Visible  Saturated trial 4/5: ok (1639 ms, 10.9s clip)
+windowed   Visible  Saturated trial 5/5: ok (1629 ms, 15.6s clip)
+windowed   Hidden   Idle      trial 1/5: ok (251 ms, 19.1s clip)
+windowed   Hidden   Idle      trial 2/5: ok (501 ms, 8.8s clip)
+windowed   Hidden   Idle      trial 3/5: ok (501 ms, 8.8s clip)
+windowed   Hidden   Idle      trial 4/5: ok (501 ms, 8.8s clip)
+windowed   Hidden   Idle      trial 5/5: ok (501 ms, 8.8s clip)
+windowed   Hidden   Saturated trial 1/5: ok (1752 ms, 9.3s clip)
+windowed   Hidden   Saturated trial 2/5: ok (1908 ms, 10.9s clip)
+windowed   Hidden   Saturated trial 3/5: ok (1309 ms, 11.5s clip)
+windowed   Hidden   Saturated trial 4/5: ok (1467 ms, 12.5s clip)
+windowed   Hidden   Saturated trial 5/5: ok (2034 ms, 11.9s clip)
+borderless Visible  Idle      trial 1/5: ok (501 ms, 12.0s clip)
+borderless Visible  Idle      trial 2/5: ok (751 ms, 8.8s clip)
+borderless Visible  Idle      trial 3/5: ok (751 ms, 8.8s clip)
+borderless Visible  Idle      trial 4/5: ok (752 ms, 8.8s clip)
+borderless Visible  Idle      trial 5/5: ok (752 ms, 8.8s clip)
+borderless Visible  Saturated trial 1/5: ok (1240 ms, 9.3s clip)
+borderless Visible  Saturated trial 2/5: ok (2252 ms, 10.9s clip)
+borderless Visible  Saturated trial 3/5: ok (2063 ms, 11.8s clip)
+borderless Visible  Saturated trial 4/5: ok (2959 ms, 12.5s clip)
+borderless Visible  Saturated trial 5/5: ok (1388 ms, 11.9s clip)
+borderless Hidden   Idle      trial 1/5: ok (501 ms, 14.2s clip)
+borderless Hidden   Idle      trial 2/5: ok (501 ms, 8.8s clip)
+borderless Hidden   Idle      trial 3/5: ok (751 ms, 8.8s clip)
+borderless Hidden   Idle      trial 4/5: ok (501 ms, 8.8s clip)
+borderless Hidden   Idle      trial 5/5: ok (752 ms, 8.8s clip)
+borderless Hidden   Saturated trial 1/5: ok (1368 ms, 9.3s clip)
+borderless Hidden   Saturated trial 2/5: ok (1233 ms, 17.9s clip)
+borderless Hidden   Saturated trial 3/5: ok (5459 ms, 18.6s clip)
+borderless Hidden   Saturated trial 4/5: ok (1638 ms, 14.3s clip)
+borderless Hidden   Saturated trial 5/5: ok (1069 ms, 19.9s clip)
+exclusive  Visible  Idle      trial 1/5: ok (250 ms, 13.0s clip)
+exclusive  Visible  Idle      trial 2/5: ok (250 ms, 8.6s clip)
+exclusive  Visible  Idle      trial 3/5: ok (251 ms, 8.5s clip)
+exclusive  Visible  Idle      trial 4/5: ok (251 ms, 8.4s clip)
+exclusive  Visible  Idle      trial 5/5: ok (250 ms, 8.5s clip)
+exclusive  Visible  Saturated trial 1/5: ok (12083 ms, 9.2s clip)
+exclusive  Visible  Saturated trial 2/5: ok (883 ms, 12.2s clip)
+exclusive  Visible  Saturated trial 3/5: ok (1599 ms, 10.0s clip)
+exclusive  Visible  Saturated trial 4/5: ok (965 ms, 10.6s clip)
+exclusive  Visible  Saturated trial 5/5: ok (1766 ms, 10.0s clip)
+exclusive  Hidden   Idle      trial 1/5: ok (250 ms, 12.8s clip)
+exclusive  Hidden   Idle      trial 2/5: ok (251 ms, 8.6s clip)
+exclusive  Hidden   Idle      trial 3/5: ok (250 ms, 8.5s clip)
+exclusive  Hidden   Idle      trial 4/5: ok (250 ms, 8.5s clip)
+exclusive  Hidden   Idle      trial 5/5: ok (251 ms, 8.5s clip)
+exclusive  Hidden   Saturated trial 1/5: ok (2189 ms, 16.7s clip)
+exclusive  Hidden   Saturated trial 2/5: ok (8926 ms, 13.2s clip)
+exclusive  Hidden   Saturated trial 3/5: ok (1858 ms, 16.6s clip)
+exclusive  Hidden   Saturated trial 4/5: ok (1135 ms, 10.6s clip)
+exclusive  Hidden   Saturated trial 5/5: ok (2109 ms, 10.5s clip)
+
+| mode | elevated | window | cpu | passed | failures | median latency |
+|---|---|---|---|---|---|---|
+| windowed | false | Visible | Idle | 5/5 | ΓÇô | 500 ms |
+| windowed | false | Visible | Saturated | 5/5 | ΓÇô | 1629 ms |
+| windowed | false | Hidden | Idle | 5/5 | ΓÇô | 501 ms |
+| windowed | false | Hidden | Saturated | 5/5 | ΓÇô | 1752 ms |
+| borderless | false | Visible | Idle | 5/5 | ΓÇô | 751 ms |
+| borderless | false | Visible | Saturated | 5/5 | ΓÇô | 2063 ms |
+| borderless | false | Hidden | Idle | 5/5 | ΓÇô | 501 ms |
+| borderless | false | Hidden | Saturated | 5/5 | ΓÇô | 1368 ms |
+| exclusive | false | Visible | Idle | 5/5 | ΓÇô | 250 ms |
+| exclusive | false | Visible | Saturated | 5/5 | ΓÇô | 1599 ms |
+| exclusive | false | Hidden | Idle | 5/5 | ΓÇô | 250 ms |
+| exclusive | false | Hidden | Saturated | 5/5 | ΓÇô | 2109 ms |
+
+
+=== bench  (14:09:30) ===
+baseline       run 1/5: 79.9 fps avg, 26.2 fps 1% low, p99 27.66 ms | ClipLite CPU 0.00% of machine (0.0% of one core) RAM 0 MB
+baseline       run 2/5: 79.6 fps avg, 47.0 fps 1% low, p99 16.35 ms | ClipLite CPU 0.00% of machine (0.0% of one core) RAM 0 MB
+baseline       run 3/5: 80.0 fps avg, 66.3 fps 1% low, p99 14.39 ms | ClipLite CPU 0.00% of machine (0.0% of one core) RAM 0 MB
+baseline       run 4/5: 79.8 fps avg, 33.4 fps 1% low, p99 21.10 ms | ClipLite CPU 0.00% of machine (0.0% of one core) RAM 0 MB
+baseline       run 5/5: 79.6 fps avg, 45.9 fps 1% low, p99 18.24 ms | ClipLite CPU 0.00% of machine (0.0% of one core) RAM 0 MB
+replay         run 1/5: 78.1 fps avg, 48.5 fps 1% low, p99 17.07 ms | ClipLite CPU 0.05% of machine (0.8% of one core) RAM 656 MB
+Error: fake game did not report READY within 15 s
+
+=== soak  (14:16:18) ===
+soak: 2 h, save every 10 min, sample every 5 s
+    600s save: no_file | private 664 MB | temp 136 MB
+   1200s save: no_file | private 670 MB | temp 138 MB
+   1800s save: no_file | private 671 MB | temp 138 MB
+   2400s save: no_file | private 671 MB | temp 138 MB
+   3000s save: no_file | private 672 MB | temp 138 MB
+   3600s save: no_file | private 671 MB | temp 138 MB
+   4200s save: no_file | private 675 MB | temp 138 MB
+   4800s save: no_file | private 673 MB | temp 138 MB
+   5400s save: no_file | private 674 MB | temp 138 MB
+   6000s save: no_file | private 675 MB | temp 138 MB
+   6600s save: no_file | private 674 MB | temp 138 MB
+
+soak verdict: {
+  "pass": false,
+  "slope_mb_per_hour": 4.1001816883323405,
+  "band_mb": 13.02734375,
+  "max_temp_dir_mb": 138.0,
+  "saves_ok": 0,
+  "saves_total": 11
+}
+
+=== Suite finished 16:16:31 ===
+matrix           ok
+bench            FAILED (exit 1)
+soak             ok
+**********************
+Windows PowerShell transcript end
+End time: 20261112161631
+**********************

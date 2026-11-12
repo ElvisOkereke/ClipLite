@@ -31,3 +31,6 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Benchmark logs are part of the published dataset
+!docs/benchmarks/**/*.log

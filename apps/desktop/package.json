@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
+    "bundle": "tauri build --config src-tauri/tauri.bundle.json",
     "preview": "vite preview",
     "tauri": "tauri"
   },
