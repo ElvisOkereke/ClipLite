@@ -629,7 +629,10 @@ name = "cliplite-testkit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "serde",
+ "serde_json",
  "windows 0.58.0",
 ]
 

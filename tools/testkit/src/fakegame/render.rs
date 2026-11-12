@@ -294,9 +294,18 @@ pub fn run(args: Args) -> Result<()> {
 
     let hwnd = create_window(args.mode, width, height)?;
     let mut gfx = Gfx::new(hwnd, width, height)?;
-    if args.mode == Mode::Exclusive {
-        gfx.set_fullscreen(true).context("SetFullscreenState(TRUE)")?;
-    }
+    // Exclusive fullscreen needs foreground; when launched from a background
+    // process it may not have it yet (foreground lock), so retry until it sticks.
+    let mut last_fs_try: Option<Instant> = None;
+    let mut try_fullscreen = |gfx: &mut Gfx| {
+        if args.mode == Mode::Exclusive && !gfx.is_fullscreen() && last_fs_try.map_or(true, |t| t.elapsed() > Duration::from_millis(500)) {
+            last_fs_try = Some(Instant::now());
+            if unsafe { GetForegroundWindow() } == hwnd {
+                let _ = gfx.set_fullscreen(true);
+            }
+        }
+    };
+    try_fullscreen(&mut gfx);
 
     let mut frametimes = match &args.frametimes {
         Some(p) => Some(FrametimeWriter::new(std::io::BufWriter::new(std::fs::File::create(p)?))?),
@@ -324,6 +333,7 @@ pub fn run(args: Args) -> Result<()> {
         if deadline.is_some_and(|d| Instant::now() >= d) {
             break;
         }
+        try_fullscreen(&mut gfx);
         let now = Instant::now();
         gfx.draw(now.duration_since(start).as_secs_f32(), iters, args.vsync);
         let after = Instant::now();
@@ -332,7 +342,8 @@ pub fn run(args: Args) -> Result<()> {
         }
         last = after;
         frame += 1;
-        if !ready_printed.swap(true, Ordering::SeqCst) {
+        let settled = args.mode != Mode::Exclusive || gfx.is_fullscreen() || start.elapsed() > Duration::from_secs(5);
+        if settled && !ready_printed.swap(true, Ordering::SeqCst) {
             use std::io::Write;
             println!("READY hwnd=0x{:x} fullscreen={}", hwnd.0 as usize, gfx.is_fullscreen());
             std::io::stdout().flush().ok();
