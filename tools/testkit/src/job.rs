@@ -90,12 +90,25 @@ pub fn list_processes() -> Vec<ProcInfo> {
     out
 }
 
+/// Lowercased path without the `\\?\` verbatim prefix that `canonicalize()`
+/// adds (process image paths never carry it).
+fn normalize(p: &Path) -> String {
+    let s = p.to_string_lossy().to_lowercase();
+    if let Some(rest) = s.strip_prefix(r"\\?\unc\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s
+    }
+}
+
 /// Processes whose image lives under `dir` (case-insensitive).
 pub fn processes_under(dir: &Path) -> Vec<ProcInfo> {
-    let d = dir.to_string_lossy().to_lowercase();
+    let d = normalize(dir);
     list_processes()
         .into_iter()
-        .filter(|p| p.path.as_ref().is_some_and(|x| x.to_string_lossy().to_lowercase().starts_with(&d)))
+        .filter(|p| p.path.as_ref().is_some_and(|x| normalize(x).starts_with(&d)))
         .collect()
 }
 
@@ -132,6 +145,14 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(!is_alive(pid), "child survived job close");
+    }
+
+    #[test]
+    fn finds_own_process_under_verbatim_dir() {
+        // canonicalize() yields \\?\C:\... but process image paths are C:\...
+        let dir = std::env::current_exe().unwrap().parent().unwrap().canonicalize().unwrap();
+        assert!(dir.to_string_lossy().starts_with(r"\\?\"));
+        assert!(processes_under(&dir).iter().any(|p| p.pid == std::process::id()));
     }
 
     #[test]
