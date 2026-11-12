@@ -84,9 +84,11 @@ fn emit(event: &Event) {
 /// Get the ClipLite app directory (~/.cliplite).
 /// All app files (settings, library, temp files, etc.) are stored here.
 fn get_app_dir() -> std::path::PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".cliplite")
+    // Same rule as settings::app_dir() in the UI process (separate binary).
+    match std::env::var_os("CLIPLITE_HOME") {
+        Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
+        _ => dirs::home_dir().unwrap_or_default().join(".cliplite"),
+    }
 }
 
 /// Get the replay temp directory (~/.cliplite/temp).

@@ -35,10 +35,7 @@ impl Clip {
 pub struct LibraryState(pub Mutex<()>);
 
 fn db_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".cliplite")
-        .join("library.db")
+    crate::settings::app_dir().join("library.db")
 }
 
 pub fn init_db() -> Result<()> {

@@ -957,7 +957,7 @@ fn parse_fps(s: &str) -> f64 {
 }
 
 fn generate_thumb(ffmpeg: &PathBuf, filepath: &str, clip_id: i64) -> anyhow::Result<String> {
-    let dir = dirs::home_dir().unwrap_or_default().join(".cliplite").join("thumbnails");
+    let dir = crate::settings::app_dir().join("thumbnails");
     std::fs::create_dir_all(&dir)?;
     let out = dir.join(format!("{clip_id}.jpg"));
     Command::new(ffmpeg)

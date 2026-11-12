@@ -6,6 +6,7 @@ mod settings;
 mod ffmpeg;
 mod tray;
 mod hotkey_listener;
+mod test_mode;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -25,9 +26,7 @@ impl Default for HotkeyListenerHandle {
 
 /// Initialize logging to file and set up panic hook.
 fn setup_logging() {
-    let log_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".cliplite/debug.log");
+    let log_path = settings::app_dir().join("debug.log");
 
     // Create directory if needed
     let log_dir = log_path.parent();
@@ -59,9 +58,7 @@ fn setup_logging() {
         let msg = format!("[PANIC] {:?}", info);
         log::error!("{msg}");
         
-        let log_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".cliplite/debug.log");
+        let log_path = settings::app_dir().join("debug.log");
         
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .append(true)
@@ -141,6 +138,8 @@ pub fn run() {
                 log::info!("Encoder detected: {encoder}");
                 *app_handle.state::<EncoderCache>().inner().0.lock().unwrap() = encoder;
             });
+
+            test_mode::maybe_autostart(app.handle());
 
             if let Some(win) = app.get_webview_window("main") {
                 win.show().ok();
