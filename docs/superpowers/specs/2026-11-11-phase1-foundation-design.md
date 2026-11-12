@@ -170,7 +170,17 @@ Recommended order: **0 → 1 → 2 → 3 → 4 → 5 → 6.** Workstream 0 comes
 - FFmpeg arg builder gets **snapshot tests** (e.g. `insta`) for every encoder × audio combination so regressions are caught in CI without a GPU.
 - AMD/Intel paths can't be hardware-tested on the dev machine (the AMD iGPU may allow an AMF smoke test — builder's call). Untested paths are labeled as such in docs.
 
-**Done when:** NVENC path verified on dev machine with benchmark; snapshot tests for all paths; fallback chain verified by forcing failures.
+**Driver / build compatibility (owner decision, 2026-11-12).** Found during WS0: gyan.dev FFmpeg ≥ 8.1.2 links NVENC API 13.1, which needs NVIDIA driver ≥ 610; on driver 596 `h264_nvenc` fails to open. FFmpeg is pinned to 8.1.1 for now. Users will hit variants of this, so:
+- **Probe the real pipeline** at startup (ddagrab D3D11 → encoder, a few frames), not a synthetic encode. Cache results keyed on GPU name + driver version + FFmpeg version; re-probe only when one changes.
+- **Automatic fallback at record/replay start:** if the chosen encoder fails to open, retry down the chain (NVENC → AMF → QSV → libx264) instead of surfacing an error. Never lose a clip to an encoder problem.
+- **Actionable diagnosis:** parse FFmpeg's failure text (e.g. `Required: 13.1 Found: 13.0`, `minimum required Nvidia driver … 610`) into a structured reason and show a plain-language notice ("NVIDIA encoding unavailable: driver 596 is older than required 610 — using CPU encoding; update your driver for best performance"). Unit-test the parser against captured FFmpeg error strings.
+- **"Copy diagnostics"** in Settings: GPU(s), driver versions, FFmpeg version, probe results per encoder, recent log lines — pasteable into a GitHub issue.
+- **FFmpeg pin = compatibility contract:** `fetch-ffmpeg.ps1` documents the minimum NVIDIA driver for the pinned build; bumping FFmpeg requires re-running the encoder probe/HIL checks and updating the documented floor.
+- **AMD path testable locally:** the dev machine's Ryzen 9800X3D iGPU exposes AMF; the HIL runner should exercise AMF too (selecting the adapter/output as needed), so AMF is not "untested".
+- Later option (not Phase 1): build FFmpeg in CI against pinned nv-codec-headers (control the driver floor; possible LGPL build).
+- The owner keeps the current driver (596) until Phase 1 before/after numbers are captured, so a driver change doesn't confound the comparison.
+
+**Done when:** NVENC path verified on dev machine with benchmark; snapshot tests for all paths; fallback chain verified by forcing failures (including an encoder that fails to open at start); diagnosis parser tested on real FFmpeg error output; AMF path exercised on the iGPU.
 
 ### WS4 — Benchmarks
 
