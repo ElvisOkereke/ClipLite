@@ -69,6 +69,17 @@ pub fn test_settings(clips: &Path, buffer_secs: u32, chord: &str, audio: &TestAu
     })
 }
 
+/// Environment for the app under test: isolated data dir, test mode, and an
+/// isolated WebView2 profile (else WebView2 joins the owner's running ClipLite
+/// browser process, which skews measurements and leaks state).
+pub fn app_env(home: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![
+        ("CLIPLITE_HOME", home.to_path_buf()),
+        ("CLIPLITE_TEST_MODE", PathBuf::from("1")),
+        ("WEBVIEW2_USER_DATA_FOLDER", home.join("webview2")),
+    ]
+}
+
 fn kill_app_procs(app_dir: &Path) {
     for p in processes_under(app_dir) {
         if APP_PROCS.iter().any(|n| p.name.eq_ignore_ascii_case(n)) {
@@ -94,8 +105,7 @@ impl Harness {
         let job = Job::new_kill_on_close(true)?;
         let child = job.spawn(
             Command::new(&app)
-                .env("CLIPLITE_HOME", &home)
-                .env("CLIPLITE_TEST_MODE", "1")
+                .envs(app_env(&home))
                 .stdout(Stdio::null())
                 .stderr(Stdio::null()),
         )?;
@@ -313,6 +323,16 @@ pub fn wait_new_clips(dir: &Path, before: &[PathBuf], timeout: Duration) -> (Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_env_isolates_data_and_webview() {
+        let home = Path::new("h");
+        let env = app_env(home);
+        assert!(env.contains(&("CLIPLITE_HOME", home.to_path_buf())));
+        assert!(env.contains(&("CLIPLITE_TEST_MODE", "1".into())));
+        // otherwise WebView2 reuses the owner's running ClipLite browser process
+        assert!(env.contains(&("WEBVIEW2_USER_DATA_FOLDER", home.join("webview2"))));
+    }
 
     #[test]
     fn parses_ready_line() {

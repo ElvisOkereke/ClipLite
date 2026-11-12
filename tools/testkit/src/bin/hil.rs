@@ -337,6 +337,11 @@ mod win {
 
         for scenario in ["baseline", "replay", "replay_record"] {
             let harness = if scenario == "baseline" { None } else { Some(Harness::start(app, &out.join(scenario), 60, DEFAULT_CHORD)?) };
+            // Hotkeys are not delivered while ClipLite's own window has focus, and
+            // people game with it in the tray anyway: hide it before any chord.
+            if let Some(h) = &harness {
+                h.set_window(cliplite_testkit::matrix::WindowState::Hidden)?;
+            }
             let mut results = Vec::new();
             for k in 1..=runs {
                 let run_dir = out.join(scenario).join(format!("run{k}"));
