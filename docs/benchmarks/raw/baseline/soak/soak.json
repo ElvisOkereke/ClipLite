@@ -1,0 +1,26 @@
+{
+  "build": {
+    "app_path": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-baseline\\src-tauri\\target\\release\\cliplite.exe",
+    "git_sha": "1dd2eee5ad469896b1f6d3df8fe27cd18f5241dc"
+  },
+  "machine": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "AMD Radeon(TM) Graphics; NVIDIA GeForce RTX 3070"
+  },
+  "params": {
+    "cap_mb": 500,
+    "hours": 2.0,
+    "sample_every_secs": 5,
+    "save_every_mins": 10.0,
+    "warmup_mins": 10.0
+  },
+  "started_at": "2026-11-12T14:16:18.708504900-05:00",
+  "verdict": {
+    "band_mb": 13.02734375,
+    "max_temp_dir_mb": 138.0,
+    "pass": false,
+    "saves_ok": 0,
+    "saves_total": 11,
+    "slope_mb_per_hour": 4.1001816883323405
+  }
+}

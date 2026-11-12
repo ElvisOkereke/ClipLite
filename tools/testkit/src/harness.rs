@@ -244,10 +244,34 @@ pub fn parse_ready(line: &str) -> Option<(isize, bool)> {
     Some((hwnd?, fs?))
 }
 
-/// Launch the fake game inside `job` and wait (≤ 15 s) for READY.
+/// Launch the fake game inside `job` and wait for READY; one retry, since a
+/// single failed launch shouldn't sink a multi-hour run.
 pub fn launch_game(job: &Job, fakegame: &Path, args: &[String]) -> Result<Game> {
-    let mut child = job.spawn(Command::new(fakegame).args(args).stdout(Stdio::piped()).stderr(Stdio::null()))?;
+    match launch_game_once(job, fakegame, args) {
+        Ok(g) => Ok(g),
+        Err(first) => {
+            eprintln!("fake game launch failed, retrying once: {first:#}");
+            std::thread::sleep(Duration::from_secs(2));
+            launch_game_once(job, fakegame, args).map_err(|e| e.context(format!("retry after: {first:#}")))
+        }
+    }
+}
+
+fn launch_game_once(job: &Job, fakegame: &Path, args: &[String]) -> Result<Game> {
+    let mut child = job.spawn(Command::new(fakegame).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()))?;
     let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let err_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    {
+        let err_text = err_text.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let mut t = err_text.lock().unwrap();
+                t.push_str(&line);
+                t.push('\n');
+            }
+        });
+    }
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -271,8 +295,14 @@ pub fn launch_game(job: &Job, fakegame: &Path, args: &[String]) -> Result<Game> 
     match rx.recv_timeout(Duration::from_secs(15)) {
         Ok((h, fullscreen)) => Ok(Game { child, hwnd: HWND(h as _), fullscreen }),
         Err(_) => {
+            let status = child.try_wait().ok().flatten();
             let _ = child.kill();
-            bail!("fake game did not report READY within 15 s")
+            std::thread::sleep(Duration::from_millis(200));
+            let stderr = err_text.lock().unwrap().trim().to_string();
+            match status {
+                Some(s) => bail!("fake game exited ({s}) before READY; stderr: {stderr}"),
+                None => bail!("fake game did not report READY within 15 s (still running); stderr: {stderr}"),
+            }
         }
     }
 }

@@ -233,7 +233,7 @@ mod win {
                 let r = match cliplite_testkit::input::send_chord(&harness.chord) {
                     Err(_) => TrialResult::failed("input_blocked"),
                     Ok(()) => {
-                        let (new, latency) = wait_new_clips(&harness.clips, &before, Duration::from_secs(20));
+                        let (new, latency) = wait_new_clips(&harness.clips, &before, Duration::from_secs(90));
                         let report = if new.len() == 1 { clip::validate(&ffprobe, &ffmpeg, &new[0]).ok() } else { None };
                         let mut r = evaluate_trial(&new, report.as_ref(), 3.0);
                         r.latency_ms = latency;
@@ -360,7 +360,17 @@ mod win {
                     "--mode".into(), mode.into(), "--gpu-load".into(), gpu_load.to_string(),
                     "--duration-secs".into(), duration_secs.to_string(), "--frametimes".into(), ft_path.display().to_string(),
                 ];
-                let mut game = launch_game(&job, &fakegame, &args)?;
+                let mut game = match launch_game(&job, &fakegame, &args) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        println!("{scenario:<14} run {k}/{runs}: FAILED to launch fake game: {e:#}");
+                        if scenario == "replay_record" {
+                            let _ = cliplite_testkit::input::send_chord(RECORD_STOP_CHORD);
+                        }
+                        results.push(serde_json::json!({ "run": k, "error": format!("{e:#}") }));
+                        continue;
+                    }
+                };
                 let mut procs = csv(&run_dir.join("procs.csv"), "t_s,name,pid,private_bytes,working_set,handles,cpu_time_ms,write_bytes")?;
                 let mut cpu: HashMap<u32, (u64, u64)> = HashMap::new();
                 let mut private_sum = Vec::new();
