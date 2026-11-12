@@ -13,6 +13,11 @@ dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 which.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
+tracing-log = "0.2"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

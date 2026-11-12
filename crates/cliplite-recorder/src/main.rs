@@ -13,12 +13,40 @@ use std::sync::{Arc, Mutex};
 
 mod recorder;
 use cliplite_core::{audio, ffmpeg};
-use cliplite_core::ipc::{AudioConfig, Command, Event, StartArgs};
+use cliplite_core::ipc::{AudioConfig, Command, Envelope, Event, StartArgs};
+use cliplite_core::telemetry::{new_cid, Stage};
 
-fn emit(event: &Event) {
-    let json = serde_json::to_string(event).unwrap_or_default();
+/// Write one event to stdout (the IPC channel), tagged with the command's cid.
+fn emit(event: Event, cid: &str) {
+    if let Event::Error { message } = &event {
+        tracing::error!(stage = Stage::Error.as_str(), cid = %cid, %message, "recorder error");
+    }
+    let env = Envelope { body: event, cid: Some(cid.to_string()) };
+    let json = serde_json::to_string(&env).unwrap_or_default();
     println!("{json}");
     std::io::stdout().flush().ok();
+}
+
+fn command_name(cmd: &Command) -> &'static str {
+    match cmd {
+        Command::Start { .. } => "start",
+        Command::Stop => "stop",
+        Command::Pause => "pause",
+        Command::Resume => "resume",
+        Command::Status => "status",
+        Command::StartReplay { .. } => "start_replay",
+        Command::StopReplay => "stop_replay",
+        Command::SaveReplay { .. } => "save_replay",
+    }
+}
+
+fn log_ffmpeg_spawned(cid: &str, rec: &recorder::RecorderInner, purpose: &str) {
+    let pid = rec.process.as_ref().map(|p| p.id()).unwrap_or(0);
+    tracing::info!(stage = Stage::FfmpegSpawned.as_str(), cid = %cid, pid, purpose, "ffmpeg spawned");
+}
+
+fn log_ffmpeg_exited(cid: &str, purpose: &str, ok: bool) {
+    tracing::info!(stage = Stage::FfmpegExited.as_str(), cid = %cid, purpose, ok, "ffmpeg exited");
 }
 
 /// Get the ClipLite app directory (~/.cliplite).
@@ -110,11 +138,11 @@ fn do_start_with_extra(
                 }
                 Ok(None) => {
                     // Audio device failed — build FFmpeg command without audio
-                    eprintln!("[recorder] audio disabled (device failed), recording video only");
+                    tracing::warn!("audio disabled (device failed), recording video only");
                     effective_audio_cfg = AudioConfig { mic_device: None, sys_device_id: None, mic_device_id: None };
                 }
                 Err(e) => {
-                    eprintln!("[recorder] audio thread spawn failed: {e}");
+                    tracing::warn!("audio thread spawn failed: {e}");
                     effective_audio_cfg = AudioConfig { mic_device: None, sys_device_id: None, mic_device_id: None };
                 }
             }
@@ -167,11 +195,11 @@ fn do_start(rec: &mut recorder::RecorderInner, args: StartArgs) -> Result<String
                     effective_audio_cfg = args.audio_cfg.clone();
                 }
                 Ok(None) => {
-                    eprintln!("[recorder] audio disabled (device failed), recording video only");
+                    tracing::warn!("audio disabled (device failed), recording video only");
                     effective_audio_cfg = AudioConfig { mic_device: None, sys_device_id: None, mic_device_id: None };
                 }
                 Err(e) => {
-                    eprintln!("[recorder] audio thread spawn failed: {e}");
+                    tracing::warn!("audio thread spawn failed: {e}");
                     effective_audio_cfg = AudioConfig { mic_device: None, sys_device_id: None, mic_device_id: None };
                 }
             }
@@ -203,6 +231,9 @@ fn do_start(rec: &mut recorder::RecorderInner, args: StartArgs) -> Result<String
 }
 
 fn main() {
+    let _log_guard = cliplite_core::telemetry::init_json_logging("recorder");
+    tracing::info!(pid = std::process::id(), "cliplite-recorder started");
+
     let state        = Arc::new(Mutex::new(recorder::RecorderInner::default()));
     let replay_state = Arc::new(Mutex::new(recorder::RecorderInner::default()));
     let replay_path  = Arc::new(Mutex::new(String::new()));
@@ -224,43 +255,46 @@ fn main() {
             _ => continue,
         };
 
-        let cmd: Command = match serde_json::from_str(&line) {
+        let env: Envelope<Command> = match serde_json::from_str(&line) {
             Ok(c)  => c,
-            Err(e) => { emit(&Event::Error { message: format!("Parse error: {e}") }); continue; }
+            Err(e) => { emit(Event::Error { message: format!("Parse error: {e}") }, &new_cid()); continue; }
         };
+        let cid = env.cid.unwrap_or_else(new_cid);
+        tracing::info!(stage = Stage::RecorderCommand.as_str(), cid = %cid,
+                       cmd = command_name(&env.body), "command received");
 
-        match cmd {
+        match env.body {
             Command::Start { args } => {
                 let mut rec = state.lock().unwrap();
                 match do_start(&mut rec, args) {
-                    Ok(path) => emit(&Event::Started { path }),
-                    Err(msg) => emit(&Event::Error   { message: msg }),
+                    Ok(path) => { log_ffmpeg_spawned(&cid, &rec, "record"); emit(Event::Started { path }, &cid) }
+                    Err(msg) => emit(Event::Error   { message: msg }, &cid),
                 }
             }
             Command::Stop => {
                 let mut rec = state.lock().unwrap();
                 match rec.stop() {
-                    Ok(path) => emit(&Event::Stopped { path }),
-                    Err(e)   => emit(&Event::Error   { message: e.to_string() }),
+                    Ok(path) => { log_ffmpeg_exited(&cid, "record", true); emit(Event::Stopped { path }, &cid) }
+                    Err(e)   => emit(Event::Error   { message: e.to_string() }, &cid),
                 }
             }
             Command::Pause => {
                 let mut rec = state.lock().unwrap();
-                if let Err(e) = rec.pause() { emit(&Event::Error { message: e.to_string() }); }
+                if let Err(e) = rec.pause() { emit(Event::Error { message: e.to_string() }, &cid); }
             }
             Command::Resume => {
                 let mut rec = state.lock().unwrap();
-                if let Err(e) = rec.resume() { emit(&Event::Error { message: e.to_string() }); }
+                if let Err(e) = rec.resume() { emit(Event::Error { message: e.to_string() }, &cid); }
             }
             Command::Status => {
                 let s  = state.lock().unwrap().status();
                 let rb = replay_state.lock().unwrap().status();
-                emit(&Event::Status {
+                emit(Event::Status {
                     is_recording:  s.is_recording,
                     is_paused:     s.is_paused,
                     elapsed:       s.elapsed_seconds,
                     replay_active: rb.is_recording,
-                });
+                }, &cid);
             }
 
             // ── Replay buffer ─────────────────────────────────────────────────
@@ -290,6 +324,7 @@ fn main() {
                 // Build the command then insert -g (keyframe every second).
                 match do_start_with_extra(&mut rr, replay_args, &["-g", &fps.to_string()]) {
                     Ok(_) => {
+                        log_ffmpeg_spawned(&cid, &rr, "replay_buffer");
                         // Check if FFmpeg started successfully by waiting briefly
                         // and reading any immediate stderr errors
                         std::thread::sleep(std::time::Duration::from_millis(800));
@@ -301,7 +336,7 @@ fn main() {
                             // Record when replay started — used in SaveReplay to
                             // compute duration without probing the locked MKV file
                             *replay_start_time.lock().unwrap() = Some(std::time::Instant::now());
-                            emit(&Event::ReplayStarted { path: tmp_str });
+                            emit(Event::ReplayStarted { path: tmp_str }, &cid);
                         } else {
                             // FFmpeg exited immediately — read its stderr for the error
                             let err_msg = if let Some(mut p) = rr.process.take() {
@@ -313,10 +348,10 @@ fn main() {
                                 String::from_utf8_lossy(&buf).chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
                             } else { "FFmpeg exited immediately".into() };
                             *replay_path.lock().unwrap() = String::new();
-                            emit(&Event::Error { message: format!("Replay FFmpeg failed: {err_msg}") });
+                            emit(Event::Error { message: format!("Replay FFmpeg failed: {err_msg}") }, &cid);
                         }
                     }
-                    Err(msg) => emit(&Event::Error { message: msg }),
+                    Err(msg) => emit(Event::Error { message: msg }, &cid),
                 }
             }
 
@@ -332,16 +367,16 @@ fn main() {
                         *replay_ffmpeg_path.lock().unwrap() = String::new();
                         *replay_start_time.lock().unwrap() = None;
                         *replay_start_args.lock().unwrap() = None;
-                        emit(&Event::ReplayStopped);
+                        emit(Event::ReplayStopped, &cid);
                     }
-                    Err(e) => emit(&Event::Error { message: e.to_string() }),
+                    Err(e) => emit(Event::Error { message: e.to_string() }, &cid),
                 }
             }
 
             Command::SaveReplay { secs, output_path } => {
                 let src = replay_path.lock().unwrap().clone();
                 if src.is_empty() {
-                    emit(&Event::Error { message: "Replay buffer not active — start it first".into() });
+                    emit(Event::Error { message: "Replay buffer not active — start it first".into() }, &cid);
                     continue;
                 }
 
@@ -367,7 +402,7 @@ fn main() {
                     .unwrap_or(0.0);
 
                 if total_duration_secs < 2.0 {
-                    emit(&Event::Error { message: format!("Replay buffer too short ({total_duration_secs:.1}s) — wait longer before saving") });
+                    emit(Event::Error { message: format!("Replay buffer too short ({total_duration_secs:.1}s) — wait longer before saving") }, &cid);
                     continue;
                 }
 
@@ -381,13 +416,14 @@ fn main() {
                 // moov/EBML finalization), then read the sealed file.
                 {
                     let mut rr = replay_state.lock().unwrap();
-                    rr.stop().ok(); // stops writer FFmpeg, waits for exit
+                    let stopped = rr.stop().is_ok(); // stops writer FFmpeg, waits for exit
+                    log_ffmpeg_exited(&cid, "replay_buffer", stopped);
                 }
                 *replay_start_time.lock().unwrap() = None;
 
                 // Verify the sealed file is usable
                 if !std::path::Path::new(&src).exists() {
-                    emit(&Event::Error { message: format!("Replay temp file missing after stop: {src}") });
+                    emit(Event::Error { message: format!("Replay temp file missing after stop: {src}") }, &cid);
                     continue;
                 }
 
@@ -421,6 +457,8 @@ fn main() {
                     match cmd.spawn() {
                         Err(e) => { ffmpeg_stderr = format!("Failed to spawn FFmpeg: {e}"); false }
                         Ok(mut child) => {
+                            tracing::info!(stage = Stage::FfmpegSpawned.as_str(), cid = %cid,
+                                           pid = child.id(), purpose = "replay_extract", "ffmpeg spawned");
                             // Drain stderr on a background thread to prevent pipe-buffer
                             // deadlock: FFmpeg blocks writing stderr → read_to_string never
                             // returns → child.wait() never called → process never exits.
@@ -442,6 +480,8 @@ fn main() {
                     }
                 };
 
+                log_ffmpeg_exited(&cid, "replay_extract", extract_ok);
+
                 // Delete the old sealed temp file regardless of success
                 std::fs::remove_file(&src).ok();
                 *replay_path.lock().unwrap() = String::new();
@@ -460,14 +500,17 @@ fn main() {
 
                 // ── STEP 4: Emit result ───────────────────────────────────────
                 if extract_ok {
-                    emit(&Event::ReplaySaved { path: output_path });
+                    let bytes = std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
+                    tracing::info!(stage = Stage::ReplaySaved.as_str(), cid = %cid,
+                                   path = %output_path, bytes, "replay saved");
+                    emit(Event::ReplaySaved { path: output_path }, &cid);
                 } else {
                     let msg = if ffmpeg_stderr.is_empty() {
                         "FFmpeg exited with non-zero status".to_string()
                     } else {
                         format!("FFmpeg error: {ffmpeg_stderr}")
                     };
-                    emit(&Event::Error { message: msg });
+                    emit(Event::Error { message: msg }, &cid);
                 }
             }
         }

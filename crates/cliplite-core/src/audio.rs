@@ -152,7 +152,7 @@ impl SysAudioCapture {
                 match capture_loop(sys_device_id.as_deref(), mic_device_id.as_deref(), &pipe_name, &stop2, &ready2) {
                     Ok(()) => {}
                     Err(e) => {
-                        eprintln!("[recorder audio] {e}");
+                        tracing::warn!("audio capture failed: {e}");
                         // Signal failure so the caller can disable audio in FFmpeg
                         let mut g = ready2.lock().unwrap();
                         if g.is_none() {
@@ -182,7 +182,7 @@ impl SysAudioCapture {
                 // pipe that doesn't exist.
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);
                 drop(thread); // don't join — it may be blocked on device open
-                eprintln!("[recorder audio] disabled: {e}");
+                tracing::warn!("audio disabled: {e}");
                 Ok(None)
             }
         }

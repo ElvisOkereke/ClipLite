@@ -2,6 +2,11 @@
 use super::*;
 use cliplite_core::ipc;
 
+/// Bare command line without an envelope (the pre-telemetry wire format).
+fn ipc_line(cmd: &ipc::Command) -> String {
+    serde_json::to_string(cmd).unwrap()
+}
+
 fn ui_args() -> (Region, AudioConfig, EncConfig) {
     (
         Region { x: 10, y: 20, width: 2560, height: 1440, monitor: 1 },
@@ -42,4 +47,20 @@ fn simple_command_lines_match_legacy_literals() {
     assert_eq!(ipc_line(&ipc::Command::StopReplay), r#"{"cmd":"stop_replay"}"#);
     assert_eq!(ipc_line(&ipc::Command::Pause), r#"{"cmd":"pause"}"#);
     assert_eq!(ipc_line(&ipc::Command::Resume), r#"{"cmd":"resume"}"#);
+}
+
+#[test]
+fn envelope_line_carries_cid_and_still_parses() {
+    let line = ipc_envelope_line(&ipc::Command::SaveReplay { secs: 30, output_path: "o.mp4".into() }, "cid123");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["cmd"], "save_replay");
+    assert_eq!(v["cid"], "cid123");
+    let env: ipc::Envelope<ipc::Command> = serde_json::from_str(&line).unwrap();
+    assert!(matches!(env.body, ipc::Command::SaveReplay { secs: 30, .. }));
+}
+
+#[test]
+fn received_reuses_given_cid_or_mints_one() {
+    assert_eq!(received("save_replay", Some("abc".into())), "abc");
+    assert_eq!(received("save_replay", None).len(), 32);
 }

@@ -63,6 +63,17 @@ pub enum Event {
     Error         { message: String },
 }
 
+/// A command or event plus an optional correlation id, serialized flat:
+/// `{"cmd":"stop","cid":"abc"}` / `{"event":"stopped","path":"…","cid":"abc"}`.
+/// A missing `cid` deserializes to `None`, so pre-telemetry JSON still parses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Envelope<T> {
+    #[serde(flatten)]
+    pub body: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<String>,
+}
+
 #[cfg(test)]
 #[path = "ipc_tests.rs"]
 mod tests;

@@ -36,7 +36,7 @@ Outputs to `target/release/`. Both `cliplite.exe` and `cliplite-recorder.exe` mu
 | `apps/desktop/src-tauri/src/lib.rs` | Tauri builder + app setup |
 | `apps/desktop/src-tauri/capabilities/default.json` | **Required** Tauri v2 ACL permissions |
 | `apps/desktop/src-tauri/tauri.conf.json` | Window config, WebView2 args |
-| `~/.cliplite/debug.log` | Backend log (truncated on each launch) |
+| `~/.cliplite/logs/app.<date>.jsonl` / `recorder.<date>.jsonl` (JSON lines; filter by `cid`) | Backend log, rotated daily, 7 kept |
 
 ## Persistent data locations
 
@@ -46,7 +46,7 @@ Outputs to `target/release/`. Both `cliplite.exe` and `cliplite-recorder.exe` mu
 | `~/.cliplite/library.db` | Clip library (SQLite) |
 | `~/.cliplite/thumbnails/` | Clip thumbnails |
 | `~/Videos/ClipLite/` | Default recording output |
-| `~/.cliplite/debug.log` | Backend log |
+| `~/.cliplite/logs/app.<date>.jsonl` / `recorder.<date>.jsonl` (JSON lines; filter by `cid`) | Backend log |
 
 ## Default hotkeys
 
@@ -82,7 +82,7 @@ All hotkeys are configurable in Settings → Save Settings to apply.
 
 1. Open Debug Panel (🐛 button, bottom-right of the app).
 2. Click a simulate button — if the Recent Events list shows the event, frontend listeners work.
-3. Press a physical hotkey — backend log (`~/.cliplite/debug.log`) should show `[hotkeys] FIRED:` and `emit_to main OK:`.
+3. Press a physical hotkey — backend log (`~/.cliplite/logs/app.<date>.jsonl` / `recorder.<date>.jsonl` (JSON lines; filter by `cid`)) should show `"stage":"hotkey.pressed"` then `"stage":"hotkey.dispatched"` with the same `cid`.
 4. If browser console shows `event.listen not allowed` — `apps/desktop/src-tauri/capabilities/default.json` is missing or malformed.
 
 ## Troubleshooting video stalls

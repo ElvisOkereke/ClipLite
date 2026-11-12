@@ -171,11 +171,11 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // Handlers are defined later in the file, so initialize refs with no-ops.
   // They are updated on every render via the useEffect blocks below, so
   // the listener callbacks always invoke the current handler with current state.
-  const handleStartRecordRef  = useRef<() => void>(() => {});
-  const handleStopRecordRef   = useRef<() => void>(() => {});
-  const handlePauseResumeRef  = useRef<() => void>(() => {});
-  const handleReplayToggleRef = useRef<() => void>(() => {});
-  const handleSaveReplayRef   = useRef<() => void>(() => {});
+  const handleStartRecordRef  = useRef<(cid?: string) => void>(() => {});
+  const handleStopRecordRef   = useRef<(cid?: string) => void>(() => {});
+  const handlePauseResumeRef  = useRef<(cid?: string) => void>(() => {});
+  const handleReplayToggleRef = useRef<(cid?: string) => void>(() => {});
+  const handleSaveReplayRef   = useRef<(cid?: string) => void>(() => {});
 
   const elapsedStr = useCallback((secs: number) => {
     const h = Math.floor(secs / 3600);
@@ -219,12 +219,12 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     if (isRecording) { await handleStopRecord(); } else { await handleStartRecord(); }
   };
 
-  const handleStartRecord = async () => {
+  const handleStartRecord = async (cid?: string) => {
     if (busy || isRecording) return;
     setBusy(true);
     onStatus("Starting…");
     try {
-      const path = await startRecording(buildRegion(), buildAudioCfg(), buildEncCfg());
+      const path = await startRecording(buildRegion(), buildAudioCfg(), buildEncCfg(), cid);
       startedAtRef.current = Date.now(); pausedDurRef.current = 0;
       setIsRecording(true); setIsPaused(false);
       onStatus(`Recording → ${path.split(/[/\\]/).pop()}`);
@@ -233,28 +233,28 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     } finally { setBusy(false); }
   };
 
-  const handleStopRecord = async () => {
+  const handleStopRecord = async (cid?: string) => {
     if (busy || !isRecording) return;
     setBusy(true);
     setIsRecording(false); setIsPaused(false); setElapsedSecs(0);
     onStatus("Stopping…");
     try {
-      const path = await stopRecording();
+      const path = await stopRecording(cid);
       onStatus(path ? `Saved: ${path.split(/[/\\]/).pop()}` : "Stopped.");
     } catch (e: any) {
       onStatus(`Stop error: ${e}`);
     } finally { setBusy(false); }
   };
 
-  const handlePauseResume = async () => {
+  const handlePauseResume = async (cid?: string) => {
     if (!isRecording || busy) return;
     try {
       if (isPaused) {
-        await resumeRecording();
+        await resumeRecording(cid);
         pausedDurRef.current += Date.now() - pauseStartRef.current;
         setIsPaused(false); onStatus("Resumed.");
       } else {
-        await pauseRecording();
+        await pauseRecording(cid);
         pauseStartRef.current = Date.now();
         setIsPaused(true); onStatus("Paused.");
       }
@@ -262,16 +262,16 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   };
 
   // ── Replay buffer handlers ────────────────────────────────────────────────
-  const handleReplayToggle = async () => {
+  const handleReplayToggle = async (cid?: string) => {
     if (replayBusy || REPLAY_OPTIONS[replayIdx].secs === 0) return;
     setReplayBusy(true);
     try {
       if (replayActive) {
-        await stopReplay();
+        await stopReplay(cid);
         setReplayActive(false);
         onStatus("Replay buffer stopped.");
       } else {
-        await startReplay(buildRegion(), buildAudioCfg(), buildEncCfg());
+        await startReplay(buildRegion(), buildAudioCfg(), buildEncCfg(), cid);
         setReplayActive(true);
         onStatus(`Replay buffer active (${REPLAY_OPTIONS[replayIdx].label}).`);
       }
@@ -280,14 +280,14 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     } finally { setReplayBusy(false); }
   };
 
-  const handleSaveReplay = async () => {
+  const handleSaveReplay = async (cid?: string) => {
     if (!replayActive || replayBusy) return;
     setReplayBusy(true);
     const secs = REPLAY_OPTIONS[replayIdx].secs;
     if (secs === 0) { onStatus("Set a replay duration first."); setReplayBusy(false); return; }
     onStatus("Saving replay…");
     try {
-      const path = await saveReplay(secs);
+      const path = await saveReplay(secs, cid);
       onStatus(path ? `Replay saved: ${path.split(/[/\\]/).pop()}` : "Replay saved.");
       // Buffer is auto-restarted on the backend — keep replayActive=true optimistically.
       // A status poll will correct it within 3s if restart actually failed.
@@ -319,16 +319,17 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       "hotkey-replay-save",
     ] as const;
 
-    const handlers: Record<string, () => void> = {
-      "hotkey-start-recording": () => handleStartRecordRef.current(),
-      "hotkey-stop-recording":  () => handleStopRecordRef.current(),
-      "hotkey-pause-recording": () => handlePauseResumeRef.current(),
-      "hotkey-replay-toggle":   () => handleReplayToggleRef.current(),
-      "hotkey-replay-save":     () => handleSaveReplayRef.current(),
+    // Payload carries the correlation id minted by the Rust hotkey hook.
+    const handlers: Record<string, (cid?: string) => void> = {
+      "hotkey-start-recording": (cid) => handleStartRecordRef.current(cid),
+      "hotkey-stop-recording":  (cid) => handleStopRecordRef.current(cid),
+      "hotkey-pause-recording": (cid) => handlePauseResumeRef.current(cid),
+      "hotkey-replay-toggle":   (cid) => handleReplayToggleRef.current(cid),
+      "hotkey-replay-save":     (cid) => handleSaveReplayRef.current(cid),
     };
 
     const promises = events.map(name =>
-      listen(name, () => handlers[name]())
+      listen<{ cid?: string } | null>(name, (e) => handlers[name](e.payload?.cid))
         .then(unlisten => { console.log(`[hotkeys] ✓ registered ${name}`); return unlisten; })
         .catch(err => { console.error(`[hotkeys] ✗ FAILED to register ${name}:`, err); return () => {}; })
     );
@@ -460,7 +461,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
           <button
             className={`btn btn-sm ${replayActive ? "btn-replay active" : "btn-replay"}`}
             style={{ marginLeft:8 }}
-            onClick={handleReplayToggle}
+            onClick={() => handleReplayToggle()}
             disabled={replayBusy || REPLAY_OPTIONS[replayIdx].secs === 0}
             title={REPLAY_OPTIONS[replayIdx].secs === 0
               ? "Select a duration above to enable replay buffer"
@@ -474,7 +475,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
           <button
             className="btn btn-primary btn-sm"
             style={{ marginLeft:4 }}
-            onClick={handleSaveReplay}
+            onClick={() => handleSaveReplay()}
             disabled={!replayActive || replayBusy}
             title={replayActive
               ? `Save the last ${REPLAY_OPTIONS[replayIdx].label} to a clip`
@@ -502,7 +503,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
             : isRecording ? "■  Stop Recording" : "●  Start Recording"}
         </button>
         {isRecording && (
-          <button className="btn btn-secondary" onClick={handlePauseResume} disabled={busy}>
+          <button className="btn btn-secondary" onClick={() => handlePauseResume()} disabled={busy}>
             {isPaused ? "▶ Resume" : "⏸ Pause"}
           </button>
         )}

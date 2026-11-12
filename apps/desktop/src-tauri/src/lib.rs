@@ -23,55 +23,10 @@ impl Default for HotkeyListenerHandle {
     }
 }
 
-/// Initialize logging to file and set up panic hook.
-fn setup_logging() {
-    let log_path = settings::app_dir().join("debug.log");
-
-    // Create directory if needed
-    let log_dir = log_path.parent();
-    if let Some(dir) = log_dir {
-        let _ = std::fs::create_dir_all(dir);
-    }
-
-    // Truncate on each launch so it stays readable
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&log_path)
-    {
-        Ok(file) => {
-            env_logger::Builder::new()
-                .target(env_logger::Target::Pipe(Box::new(file)))
-                .filter_level(log::LevelFilter::Debug)
-                .format_timestamp_millis()
-                .init();
-        }
-        Err(e) => {
-            eprintln!("Warning: Could not open log file: {e}");
-        }
-    }
-
-    // Set panic hook to write to log file
-    std::panic::set_hook(Box::new(|info| {
-        let msg = format!("[PANIC] {:?}", info);
-        log::error!("{msg}");
-        
-        let log_path = settings::app_dir().join("debug.log");
-        
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&log_path)
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "{msg}");
-        }
-    }));
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    setup_logging();
+    // JSON logs in app_dir()/logs/app.<date>.jsonl (see cliplite_core::telemetry)
+    let _log_guard = cliplite_core::telemetry::init_json_logging("app");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

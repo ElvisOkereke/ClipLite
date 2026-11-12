@@ -438,7 +438,7 @@ ffmpeg -i recording.mp4 -vf "showinfo" -f null NUL 2>&1 |
 ```
 
 ### Hotkeys not working
-1. Check `~/.cliplite/debug.log` for `[hotkeys] FIRED:` and `emit_to main OK:` lines.
+1. Check `~/.cliplite/logs/app.<date>.jsonl` / `recorder.<date>.jsonl` (JSON lines; filter by `cid`) for `"stage":"hotkey.pressed"` → `"hotkey.dispatched"` lines (same `cid`).
 2. Check browser DevTools console for `[hotkeys] ✓ registered` lines — if you see `✗ FAILED ... core:event:allow-listen`, the `capabilities/default.json` file is missing.
 3. Check that `apps/desktop/src-tauri/capabilities/default.json` exists with `"core:default"` in permissions.
 4. Use the Debug Panel (🐛 button) to simulate hotkeys and verify events reach the frontend.

@@ -153,13 +153,23 @@ fn run_hook_thread(
                                 && hk.shift == shift
                                 && hk.alt   == alt
                             {
-                                log::info!("[hotkeys] FIRED: {}", hk.event);
-                                if let Some(win) = data.app.get_webview_window("main") {
-                                    if let Err(e) = win.emit(&hk.event, ()) {
-                                        log::error!("[hotkeys] emit failed: {e}");
-                                    }
+                                // NOTE: logging and emitting inside the hook callback is the
+                                // pre-existing design (fixed in WS1); kept for the baseline.
+                                use cliplite_core::telemetry::{new_cid, Stage};
+                                let cid = new_cid();
+                                tracing::info!(stage = Stage::HotkeyPressed.as_str(), cid = %cid,
+                                               event = %hk.event, "hotkey pressed");
+                                let payload = serde_json::json!({ "cid": cid });
+                                let emitted = if let Some(win) = data.app.get_webview_window("main") {
+                                    win.emit(&hk.event, payload)
                                 } else {
-                                    let _ = data.app.emit(&hk.event, ());
+                                    data.app.emit(&hk.event, payload)
+                                };
+                                match emitted {
+                                    Ok(()) => tracing::info!(stage = Stage::HotkeyDispatched.as_str(),
+                                                             cid = %cid, event = %hk.event, "hotkey dispatched"),
+                                    Err(e) => tracing::error!(stage = Stage::Error.as_str(), cid = %cid,
+                                                              "hotkey emit failed: {e}"),
                                 }
                             }
                         }

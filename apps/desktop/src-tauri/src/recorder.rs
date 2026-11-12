@@ -27,6 +27,14 @@ pub struct RecorderChild {
 #[cfg(windows)]
 impl RecorderChild {
     /// Send a newline-terminated JSON string to the recorder's stdin.
+    /// Send one IPC command tagged with a correlation id, logging `ipc.sent`.
+    pub fn send_cmd(&self, cmd: &cliplite_core::ipc::Command, cid: &str) -> Result<()> {
+        let line = crate::commands::ipc_envelope_line(cmd, cid);
+        tracing::info!(stage = cliplite_core::telemetry::Stage::IpcSent.as_str(), cid = %cid,
+                       recorder_pid = self.pid, "ipc sent");
+        self.send_line(&line)
+    }
+
     pub fn send_line(&self, line: &str) -> Result<()> {
         use windows::Win32::Storage::FileSystem::WriteFile;
         let bytes = line.as_bytes();
@@ -150,6 +158,7 @@ pub struct RecorderChild;
 #[cfg(not(windows))]
 impl RecorderChild {
     pub fn send_line(&self, _: &str) -> Result<()> { Ok(()) }
+    pub fn send_cmd(&self, _: &cliplite_core::ipc::Command, _: &str) -> Result<()> { Ok(()) }
     pub fn read_line(&self) -> Option<String> { None }
     pub fn try_wait(&self) -> Option<u32> { None }
     pub fn kill(&self) {}
@@ -256,11 +265,11 @@ impl RecorderInner {
 
     // ── Pause / resume (via recorder child) ────────────────────────────────────
 
-    pub fn pause(&mut self) -> Result<()> {
+    pub fn pause(&mut self, cid: &str) -> Result<()> {
         if self.is_paused { return Ok(()); }
         // Pause via recorder child if available
         if let Some(child) = &self.recorder_child {
-            child.send_line(&crate::commands::ipc_line(&cliplite_core::ipc::Command::Pause)).ok();
+            child.send_cmd(&cliplite_core::ipc::Command::Pause, cid).ok();
             self.pause_start = Some(Instant::now());
             self.is_paused   = true;
             return Ok(());
@@ -268,10 +277,10 @@ impl RecorderInner {
         Err(anyhow!("Not recording"))
     }
 
-    pub fn resume(&mut self) -> Result<()> {
+    pub fn resume(&mut self, cid: &str) -> Result<()> {
         if !self.is_paused { return Ok(()); }
         if let Some(child) = &self.recorder_child {
-            child.send_line(&crate::commands::ipc_line(&cliplite_core::ipc::Command::Resume)).ok();
+            child.send_cmd(&cliplite_core::ipc::Command::Resume, cid).ok();
             if let Some(ps) = self.pause_start.take() {
                 self.paused_duration += ps.elapsed().as_secs_f64();
             }

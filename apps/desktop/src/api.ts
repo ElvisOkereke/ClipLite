@@ -11,23 +11,28 @@ import type {
 export const findFFmpeg = () => invoke<string>("find_ffmpeg");
 export const detectHwEncoder = () => invoke<string>("detect_hw_encoder");
 
+// Correlation id from a hotkey press (see cliplite_core::telemetry). Handlers
+// are also wired to onClick, which passes a MouseEvent — only forward strings.
+const corr = (cid?: unknown) => (typeof cid === "string" ? cid : undefined);
+
 // Recording
 export const startRecording = (
   region: Region,
   audio_cfg: AudioConfig,
   enc_cfg: EncConfig,
-) => invoke<string>("start_recording", { region, audioCfg: audio_cfg, encCfg: enc_cfg });
+  cid?: unknown,
+) => invoke<string>("start_recording", { region, audioCfg: audio_cfg, encCfg: enc_cfg, cid: corr(cid) });
 
-export const stopRecording = () => invoke<string>("stop_recording");
-export const pauseRecording = () => invoke<void>("pause_recording");
-export const resumeRecording = () => invoke<void>("resume_recording");
+export const stopRecording = (cid?: unknown) => invoke<string>("stop_recording", { cid: corr(cid) });
+export const pauseRecording = (cid?: unknown) => invoke<void>("pause_recording", { cid: corr(cid) });
+export const resumeRecording = (cid?: unknown) => invoke<void>("resume_recording", { cid: corr(cid) });
 export const getRecordingStatus = () => invoke<RecordingStatus>("get_recording_status");
 
 // Replay buffer
-export const startReplay = (region: Region, audio_cfg: AudioConfig, enc_cfg: EncConfig) =>
-  invoke<string>("start_replay", { region, audioCfg: audio_cfg, encCfg: enc_cfg });
-export const stopReplay  = () => invoke<void>("stop_replay");
-export const saveReplay  = (secs: number) => invoke<string>("save_replay", { secs });
+export const startReplay = (region: Region, audio_cfg: AudioConfig, enc_cfg: EncConfig, cid?: unknown) =>
+  invoke<string>("start_replay", { region, audioCfg: audio_cfg, encCfg: enc_cfg, cid: corr(cid) });
+export const stopReplay  = (cid?: unknown) => invoke<void>("stop_replay", { cid: corr(cid) });
+export const saveReplay  = (secs: number, cid?: unknown) => invoke<string>("save_replay", { secs, cid: corr(cid) });
 
 // Audio
 export const listAudioDevices = () => invoke<AudioDevice[]>("list_audio_devices");

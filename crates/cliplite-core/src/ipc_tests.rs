@@ -74,3 +74,23 @@ fn events_serialize() {
         assert_eq!(serde_json::to_string(&ev).unwrap(), want);
     }
 }
+
+#[test]
+fn envelope_with_and_without_cid() {
+    let e: Envelope<Command> = serde_json::from_str(r#"{"cmd":"stop","cid":"abc"}"#).unwrap();
+    assert_eq!(e.cid.as_deref(), Some("abc"));
+    assert!(matches!(e.body, Command::Stop));
+
+    let e: Envelope<Command> = serde_json::from_str(r#"{"cmd":"stop"}"#).unwrap();
+    assert!(e.cid.is_none());
+
+    let e: Envelope<Command> =
+        serde_json::from_str(r#"{"cmd":"save_replay","secs":30,"output_path":"o.mp4","cid":"z"}"#).unwrap();
+    assert!(matches!(e.body, Command::SaveReplay { secs: 30, .. }));
+
+    let s = serde_json::to_string(&Envelope { cid: Some("x".into()), body: Event::ReplayStopped }).unwrap();
+    assert_eq!(s, r#"{"event":"replay_stopped","cid":"x"}"#);
+
+    let s = serde_json::to_string(&Envelope { cid: None, body: Event::ReplayStopped }).unwrap();
+    assert_eq!(s, r#"{"event":"replay_stopped"}"#);
+}

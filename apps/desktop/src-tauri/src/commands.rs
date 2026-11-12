@@ -91,10 +91,21 @@ pub(crate) fn to_start_args(
     }
 }
 
-/// Serialize one IPC command as a single JSON line (no trailing newline).
-pub(crate) fn ipc_line(cmd: &cliplite_core::ipc::Command) -> String {
-    serde_json::to_string(cmd).expect("IPC command always serializes")
+/// Serialize one IPC command with its correlation id as a single JSON line.
+pub(crate) fn ipc_envelope_line(cmd: &cliplite_core::ipc::Command, cid: &str) -> String {
+    let env = cliplite_core::ipc::Envelope { body: cmd.clone(), cid: Some(cid.to_string()) };
+    serde_json::to_string(&env).expect("IPC envelope always serializes")
 }
+
+/// Log `command.received` for a Tauri command and return its correlation id
+/// (the caller's, e.g. from a hotkey press, or a fresh one).
+pub(crate) fn received(name: &str, cid: Option<String>) -> String {
+    use cliplite_core::telemetry::{new_cid, Stage};
+    let cid = cid.filter(|c| !c.is_empty()).unwrap_or_else(new_cid);
+    tracing::info!(stage = Stage::CommandReceived.as_str(), cid = %cid, name, "command received");
+    cid
+}
+
 
 // ── FFmpeg ────────────────────────────────────────────────────────────────────
 
@@ -291,7 +302,9 @@ pub async fn start_recording(
     recorder:       State<'_, RecorderState>,
     settings_state: State<'_, SettingsState>,
     encoder_cache:  State<'_, EncoderCache>,
+    cid:            Option<String>,
 ) -> Result<String, String> {
+    let cid = received("start_recording", cid);
     let settings = settings_state.0.lock().unwrap().clone();
 
     // Read encoder from cache (detected at startup — no blocking test encode)
@@ -339,8 +352,7 @@ pub async fn start_recording(
                 args: to_start_args(&ffmpeg_path, &output_str, &region, &audio_cfg, &enc_cfg, None, 0),
             };
 
-            let line = ipc_line(&cmd);
-            child.send_line(&line).map_err(|e| format!("IPC send failed: {e}"))?;
+            child.send_cmd(&cmd, &cid).map_err(|e| format!("IPC send failed: {e}"))?;
 
             // Store child handle — no blocking stdout read here
             {
@@ -375,7 +387,9 @@ pub async fn start_recording(
 pub async fn stop_recording(
     app:      AppHandle,
     recorder: State<'_, RecorderState>,
+    cid:            Option<String>,
 ) -> Result<String, String> {
+    let cid = received("stop_recording", cid);
     let path = {
         let mut rec = recorder.0.lock().unwrap();
 
@@ -386,7 +400,7 @@ pub async fn stop_recording(
             rec.is_paused  = false;
 
             // 1. Send stop command
-            child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
+            child.send_cmd(&cliplite_core::ipc::Command::Stop, &cid).ok();
 
             // 2. Close stdin → sends EOF to recorder's BufReader → main loop exits
             child.close_stdin();
@@ -441,13 +455,15 @@ pub async fn stop_recording(
 }
 
 #[tauri::command]
-pub async fn pause_recording(recorder: State<'_, RecorderState>) -> Result<(), String> {
-    recorder.0.lock().unwrap().pause().map_err(|e| e.to_string())
+pub async fn pause_recording(recorder: State<'_, RecorderState>, cid: Option<String>) -> Result<(), String> {
+    let cid = received("pause_recording", cid);
+    recorder.0.lock().unwrap().pause(&cid).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn resume_recording(recorder: State<'_, RecorderState>) -> Result<(), String> {
-    recorder.0.lock().unwrap().resume().map_err(|e| e.to_string())
+pub async fn resume_recording(recorder: State<'_, RecorderState>, cid: Option<String>) -> Result<(), String> {
+    let cid = received("resume_recording", cid);
+    recorder.0.lock().unwrap().resume(&cid).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -471,7 +487,9 @@ pub async fn start_replay(
     recorder:       State<'_, RecorderState>,
     settings_state: State<'_, SettingsState>,
     encoder_cache:  State<'_, EncoderCache>,
+    cid:            Option<String>,
 ) -> Result<String, String> {
+    let cid = received("start_replay", cid);
     let settings       = settings_state.0.lock().unwrap().clone();
     let cached_encoder = encoder_cache.inner().0.lock().unwrap().clone();
     let hw_encoder     = if cached_encoder.is_empty() { "h264_nvenc".into() } else { cached_encoder };
@@ -490,8 +508,8 @@ pub async fn start_replay(
         {
             let old = recorder.0.lock().unwrap().replay_child.take();
             if let Some(old_child) = old {
-                old_child.send_line(&ipc_line(&cliplite_core::ipc::Command::StopReplay)).ok();
-                old_child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
+                old_child.send_cmd(&cliplite_core::ipc::Command::StopReplay, &cid).ok();
+                old_child.send_cmd(&cliplite_core::ipc::Command::Stop, &cid).ok();
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 // old_child drops here, closing all Win32 handles
             }
@@ -501,11 +519,10 @@ pub async fn start_replay(
             args: to_start_args(&ffmpeg_path, "", &region, &audio_cfg, &enc_cfg,
                                 Some(REPLAY_AUDIO_PIPE), settings.max_replay_buffer_size_mb),
         };
-        let line = ipc_line(&cmd);
 
         let child = spawn_recorder_isolated(&recorder_exe)
             .map_err(|e| format!("Failed to spawn replay recorder: {e}"))?;
-        child.send_line(&line).map_err(|e| format!("IPC send failed: {e}"))?;
+        child.send_cmd(&cmd, &cid).map_err(|e| format!("IPC send failed: {e}"))?;
 
         // Read the started/error confirmation from the subprocess
         loop {
@@ -530,13 +547,14 @@ pub async fn start_replay(
 }
 
 #[tauri::command]
-pub async fn stop_replay(recorder: State<'_, RecorderState>) -> Result<(), String> {
+pub async fn stop_replay(recorder: State<'_, RecorderState>, cid: Option<String>) -> Result<(), String> {
+    let cid = received("stop_replay", cid);
     #[cfg(windows)]
     {
         let child = recorder.0.lock().unwrap().replay_child.take();
         if let Some(child) = child {
-            child.send_line(&ipc_line(&cliplite_core::ipc::Command::StopReplay)).ok();
-            child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
+            child.send_cmd(&cliplite_core::ipc::Command::StopReplay, &cid).ok();
+            child.send_cmd(&cliplite_core::ipc::Command::Stop, &cid).ok();
             // Brief pause so the subprocess can flush StopReplay event and clean temp file.
             // Drop the Arc *after* the sleep so handles stay open during the flush.
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -557,12 +575,13 @@ pub async fn save_replay(
     recorder:       State<'_, RecorderState>,
     settings_state: State<'_, SettingsState>,
     encoder_cache:  State<'_, EncoderCache>,
+    cid:            Option<String>,
 ) -> Result<String, String> {
+    let cid = received("save_replay", cid);
     let settings   = settings_state.0.lock().unwrap().clone();
     let output_str = settings.build_replay_output_path(".mp4").to_string_lossy().to_string();
 
     let cmd = cliplite_core::ipc::Command::SaveReplay { secs, output_path: output_str.clone() };
-    let line = ipc_line(&cmd);
 
     #[cfg(windows)]
     {
@@ -580,7 +599,7 @@ pub async fn save_replay(
             }
         }; // <-- lock released here
 
-        child_arc.send_line(&line).map_err(|e| e.to_string())?;
+        child_arc.send_cmd(&cmd, &cid).map_err(|e| e.to_string())?;
 
         // Drain responses until we see replay_saved or error.
         // The lock is NOT held here — other commands can run concurrently.
@@ -624,11 +643,11 @@ pub async fn save_replay(
                          format: Some(settings.default_format.clone()), hw_encoder: Some(hw_encoder.clone()) },
             Some(REPLAY_AUDIO_PIPE), settings.max_replay_buffer_size_mb,
         );
-        let restart_line = ipc_line(&cliplite_core::ipc::Command::StartReplay { args: restart_args });
+        let restart_cmd = cliplite_core::ipc::Command::StartReplay { args: restart_args };
 
         match spawn_recorder_isolated(&recorder_exe) {
             Ok(new_child) => {
-                if new_child.send_line(&restart_line).is_ok() {
+                if new_child.send_cmd(&restart_cmd, &cid).is_ok() {
                     // Wait for replay_started confirmation (with timeout via try_wait loop)
                     let started = loop {
                         match new_child.read_line() {

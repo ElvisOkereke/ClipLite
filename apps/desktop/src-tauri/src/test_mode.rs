@@ -52,7 +52,7 @@ pub fn maybe_autostart(app: &AppHandle) {
         let settings = app.state::<crate::settings::SettingsState>().0.lock().unwrap().clone();
         let (region, audio, enc) = replay_args(&settings, &crate::commands::get_monitors());
         match crate::commands::start_replay(app.clone(), region, audio, enc,
-                                            app.state(), app.state(), app.state()).await {
+                                            app.state(), app.state(), app.state(), None).await {
             Ok(path) => log::info!("[test-mode] replay auto-started: {path}"),
             Err(e)   => log::error!("[test-mode] replay auto-start failed: {e}"),
         }
