@@ -31,7 +31,15 @@ jobs:
         working-directory: apps/desktop
         run: |
           npm ci
+          npm run typecheck
           npm run build
 
+      - name: Rust build (zero warnings)
+        env:
+          RUSTFLAGS: -Dwarnings
+        run: cargo build --workspace --all-targets
+
       - name: Rust tests
+        env:
+          RUSTFLAGS: -Dwarnings
         run: cargo test --workspace

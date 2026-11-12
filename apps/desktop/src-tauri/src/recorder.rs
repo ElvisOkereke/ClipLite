@@ -1,6 +1,4 @@
 /// Recording process management — pure Rust.
-use std::io::Write;
-use std::process::Child;
 use std::sync::Mutex;
 use std::time::Instant;
 use anyhow::{anyhow, Result};
@@ -112,15 +110,6 @@ impl RecorderChild {
         }
     }
 
-    /// Close all handles. Call after the process has exited.
-    pub fn close_handles(&self) {
-        unsafe {
-            windows::Win32::Foundation::CloseHandle(self.stdin_write).ok();
-            windows::Win32::Foundation::CloseHandle(self.stdout_read).ok();
-            windows::Win32::Foundation::CloseHandle(self.thread_handle).ok();
-            windows::Win32::Foundation::CloseHandle(self.process_handle).ok();
-        }
-    }
 
     pub fn kill(&self) {
         unsafe {
@@ -163,7 +152,6 @@ impl RecorderChild {
     pub fn send_line(&self, _: &str) -> Result<()> { Ok(()) }
     pub fn read_line(&self) -> Option<String> { None }
     pub fn try_wait(&self) -> Option<u32> { None }
-    pub fn close_handles(&self) {}
     pub fn kill(&self) {}
 }
 
@@ -181,16 +169,12 @@ pub struct RecordingStatus {
 // ── RecorderInner ────────────────────────────────────────────────────────────
 
 pub struct RecorderInner {
-    pub process:          Option<Child>,
     pub output_path:      Option<String>,
     pub start_time:       Option<Instant>,
     pub paused_duration:  f64,
     pub pause_start:      Option<Instant>,
     pub is_paused:        bool,
 
-    // System audio capture handle (Windows only, fallback path)
-    #[cfg(windows)]
-    pub sys_audio: Option<crate::audio::SysAudioCapture>,
 
     // Recorder subprocess via Win32 (preferred — no handle inheritance)
     pub recorder_child: Option<RecorderChild>,
@@ -200,24 +184,18 @@ pub struct RecorderInner {
     // Wrapped in Arc so save_replay can hold a reference without holding the mutex.
     pub replay_child: Option<std::sync::Arc<RecorderChild>>,
 
-    // Old std::process::Child path — kept only for status() check of fallback
-    pub recorder_proc: Option<std::process::Child>,
 }
 
 impl Default for RecorderInner {
     fn default() -> Self {
         Self {
-            process:         None,
             output_path:     None,
             start_time:      None,
             paused_duration: 0.0,
             pause_start:     None,
             is_paused:       false,
-            #[cfg(windows)]
-            sys_audio:       None,
             recorder_child:  None,
             replay_child:    None,
-            recorder_proc:   None,
         }
     }
 }
@@ -236,27 +214,8 @@ impl RecorderInner {
             false
         };
 
-        // Check old recorder_proc (std::process::Child fallback)
-        let alive_proc = if let Some(proc) = &mut self.recorder_proc {
-            matches!(proc.try_wait(), Ok(None))
-        } else {
-            false
-        };
+        let alive = alive_win32;
 
-        // Check direct FFmpeg process (last resort fallback)
-        let alive_ffmpeg = if let Some(proc) = &mut self.process {
-            matches!(proc.try_wait(), Ok(None))
-        } else {
-            false
-        };
-
-        let alive = alive_win32 || alive_proc || alive_ffmpeg;
-
-        if !alive && self.process.is_some() {
-            self.process = None;
-            self.start_time = None;
-            self.is_paused = false;
-        }
         if !alive && self.recorder_child.is_some() {
             self.recorder_child = None;
             self.start_time = None;
@@ -284,14 +243,6 @@ impl RecorderInner {
         }
     }
 
-    pub fn replay_is_active(&self) -> bool {
-        if let Some(rc) = &self.replay_child {
-            rc.try_wait().is_none()
-        } else {
-            false
-        }
-    }
-
     fn elapsed_seconds(&self) -> f64 {
         let Some(start) = self.start_time else { return 0.0 };
         let elapsed = start.elapsed().as_secs_f64() - self.paused_duration;
@@ -303,160 +254,30 @@ impl RecorderInner {
         elapsed.max(0.0)
     }
 
-    // ── Start (direct FFmpeg — used only if recorder binary unavailable) ───────
-
-    pub fn start(&mut self, cmd: &[String], output_path: String) -> Result<()> {
-        if let Some(proc) = &mut self.process {
-            if matches!(proc.try_wait(), Ok(None)) {
-                return Err(anyhow!("Already recording"));
-            }
-        }
-        let child = crate::ffmpeg::spawn_ffmpeg(cmd)?;
-        self.process         = Some(child);
-        self.output_path     = Some(output_path);
-        self.start_time      = Some(Instant::now());
-        self.paused_duration = 0.0;
-        self.pause_start     = None;
-        self.is_paused       = false;
-        Ok(())
-    }
-
-    // ── Stop (direct FFmpeg fallback path) ─────────────────────────────────────
-
-    pub fn stop(&mut self) -> Result<String> {
-        let path = self.output_path.take().unwrap_or_default();
-
-        #[cfg(windows)]
-        if let Some(mut cap) = self.sys_audio.take() {
-            cap.stop();
-        }
-
-        let Some(mut proc) = self.process.take() else {
-            return Ok(path);
-        };
-        self.start_time = None;
-        self.is_paused  = false;
-
-        if let Some(mut stdin) = proc.stdin.take() {
-            let _ = stdin.write_all(b"q");
-            let _ = stdin.flush();
-        }
-
-        let deadline = Instant::now();
-        loop {
-            if let Ok(Some(_)) = proc.try_wait() { break; }
-            if deadline.elapsed().as_secs() > 20 {
-                let _ = proc.kill();
-                let _ = proc.wait();
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-
-        Ok(path)
-    }
-
-    // ── Pause / resume (direct FFmpeg path) ────────────────────────────────────
+    // ── Pause / resume (via recorder child) ────────────────────────────────────
 
     pub fn pause(&mut self) -> Result<()> {
         if self.is_paused { return Ok(()); }
         // Pause via recorder child if available
         if let Some(child) = &self.recorder_child {
-            child.send_line("{\"cmd\":\"pause\"}").ok();
+            child.send_line(&crate::commands::ipc_line(&cliplite_core::ipc::Command::Pause)).ok();
             self.pause_start = Some(Instant::now());
             self.is_paused   = true;
             return Ok(());
         }
-        let Some(proc) = &self.process else { return Err(anyhow!("Not recording")); };
-        suspend_process(proc.id())?;
-        self.pause_start = Some(Instant::now());
-        self.is_paused   = true;
-        Ok(())
+        Err(anyhow!("Not recording"))
     }
 
     pub fn resume(&mut self) -> Result<()> {
         if !self.is_paused { return Ok(()); }
         if let Some(child) = &self.recorder_child {
-            child.send_line("{\"cmd\":\"resume\"}").ok();
+            child.send_line(&crate::commands::ipc_line(&cliplite_core::ipc::Command::Resume)).ok();
             if let Some(ps) = self.pause_start.take() {
                 self.paused_duration += ps.elapsed().as_secs_f64();
             }
             self.is_paused = false;
             return Ok(());
         }
-        let Some(proc) = &self.process else { return Err(anyhow!("Not recording")); };
-        resume_process(proc.id())?;
-        if let Some(ps) = self.pause_start.take() {
-            self.paused_duration += ps.elapsed().as_secs_f64();
-        }
-        self.is_paused = false;
-        Ok(())
+        Err(anyhow!("Not recording"))
     }
-}
-
-// ── Platform process suspend/resume ──────────────────────────────────────────
-
-#[cfg(windows)]
-fn suspend_process(pid: u32) -> Result<()> {
-    use windows::Win32::System::Threading::{OpenProcess, SuspendThread, PROCESS_ALL_ACCESS};
-    use windows::Win32::System::Diagnostics::ToolHelp::*;
-    use windows::Win32::System::Threading::{OpenThread, THREAD_SUSPEND_RESUME};
-    unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
-            .map_err(|e| anyhow!("snapshot: {e}"))?;
-        let mut te = THREADENTRY32::default();
-        te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-        if Thread32First(snap, &mut te).is_ok() {
-            loop {
-                if te.th32OwnerProcessID == pid {
-                    if let Ok(th) = OpenThread(THREAD_SUSPEND_RESUME, false, te.th32ThreadID) {
-                        SuspendThread(th);
-                        let _ = windows::Win32::Foundation::CloseHandle(th);
-                    }
-                }
-                te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-                if Thread32Next(snap, &mut te).is_err() { break; }
-            }
-        }
-        let _ = windows::Win32::Foundation::CloseHandle(snap);
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn resume_process(pid: u32) -> Result<()> {
-    use windows::Win32::System::Diagnostics::ToolHelp::*;
-    use windows::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
-    unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
-            .map_err(|e| anyhow!("snapshot: {e}"))?;
-        let mut te = THREADENTRY32::default();
-        te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-        if Thread32First(snap, &mut te).is_ok() {
-            loop {
-                if te.th32OwnerProcessID == pid {
-                    if let Ok(th) = OpenThread(THREAD_SUSPEND_RESUME, false, te.th32ThreadID) {
-                        ResumeThread(th);
-                        let _ = windows::Win32::Foundation::CloseHandle(th);
-                    }
-                }
-                te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-                if Thread32Next(snap, &mut te).is_err() { break; }
-            }
-        }
-        let _ = windows::Win32::Foundation::CloseHandle(snap);
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn suspend_process(pid: u32) -> Result<()> {
-    std::process::Command::new("kill").args(["-STOP", &pid.to_string()]).status().ok();
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn resume_process(pid: u32) -> Result<()> {
-    std::process::Command::new("kill").args(["-CONT", &pid.to_string()]).status().ok();
-    Ok(())
 }

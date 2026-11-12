@@ -1,9 +1,8 @@
 mod commands;
+use cliplite_core::{audio, ffmpeg};
 mod recorder;
-mod audio;
 mod library;
 mod settings;
-mod ffmpeg;
 mod tray;
 mod hotkey_listener;
 mod test_mode;
@@ -80,7 +79,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .manage(recorder::RecorderState::default())
-        .manage(library::LibraryState::default())
         .manage(settings::SettingsState::default())
         .manage(EncoderCache::default())
         .manage(HotkeyListenerHandle::default())

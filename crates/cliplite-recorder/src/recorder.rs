@@ -21,7 +21,7 @@ pub struct RecorderInner {
     pub pause_start:     Option<Instant>,
     pub is_paused:       bool,
     #[cfg(windows)]
-    pub sys_audio:       Option<crate::audio::SysAudioCapture>,
+    pub sys_audio:       Option<cliplite_core::audio::SysAudioCapture>,
 }
 
 impl Default for RecorderInner {

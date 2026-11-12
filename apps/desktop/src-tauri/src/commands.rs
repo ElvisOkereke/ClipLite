@@ -54,6 +54,48 @@ pub struct MonitorInfo {
     pub refresh_rate: f64,
 }
 
+/// Named pipe the replay recorder uses for audio (recording uses the default).
+pub(crate) const REPLAY_AUDIO_PIPE: &str = r"\\.\pipe\cliplite_sysaudio_replay";
+
+/// Convert UI-facing capture options into the recorder's IPC start args,
+/// applying the defaults the UI has always relied on.
+pub(crate) fn to_start_args(
+    ffmpeg_path: &std::path::Path,
+    output_path: &str,
+    region: &Region,
+    audio: &AudioConfig,
+    enc: &EncConfig,
+    audio_pipe: Option<&str>,
+    max_replay_buffer_size_mb: u32,
+) -> cliplite_core::ipc::StartArgs {
+    use cliplite_core::ipc;
+    ipc::StartArgs {
+        ffmpeg_path: ffmpeg_path.to_string_lossy().into_owned(),
+        output_path: output_path.to_string(),
+        region: ipc::Region {
+            x: region.x, y: region.y, width: region.width, height: region.height, monitor: region.monitor,
+        },
+        audio_cfg: ipc::AudioConfig {
+            mic_device: audio.mic_device.clone(),
+            sys_device_id: audio.sys_device_id.clone(),
+            mic_device_id: audio.mic_device_id.clone(),
+        },
+        enc_cfg: ipc::EncConfig {
+            fps: enc.fps,
+            quality_crf: enc.quality_crf.unwrap_or(28),
+            format: enc.format.clone().unwrap_or_else(|| "mp4".into()),
+            hw_encoder: enc.hw_encoder.clone().unwrap_or_else(|| "h264_nvenc".into()),
+        },
+        audio_pipe: audio_pipe.map(String::from),
+        max_replay_buffer_size_mb,
+    }
+}
+
+/// Serialize one IPC command as a single JSON line (no trailing newline).
+pub(crate) fn ipc_line(cmd: &cliplite_core::ipc::Command) -> String {
+    serde_json::to_string(cmd).expect("IPC command always serializes")
+}
+
 // ── FFmpeg ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -211,14 +253,16 @@ fn spawn_recorder_isolated(
         SetPriorityClass(pi.hProcess, ABOVE_NORMAL_PRIORITY_CLASS).ok();
     }
 
-    Ok(RecorderChild {
+    let child = RecorderChild {
         process_handle: pi.hProcess,
         thread_handle:  pi.hThread,
         pid:            pi.dwProcessId,
         stdin_write,
         stdout_read,
         read_buf:       std::sync::Mutex::new(Vec::new()),
-    })
+    };
+    log::info!("[recorder] spawned cliplite-recorder pid={}", child.pid);
+    Ok(child)
 }
 
 // ── Find recorder binary ──────────────────────────────────────────────────────
@@ -291,31 +335,11 @@ pub async fn start_recording(
                 .map_err(|e| format!("Failed to spawn recorder: {e}"))?;
 
             // Send start command
-            let cmd_json = serde_json::json!({
-                "cmd": "start",
-                "args": {
-                    "ffmpeg_path": ffmpeg_path.to_string_lossy(),
-                    "output_path": output_str,
-                    "region": {
-                        "x": region.x, "y": region.y,
-                        "width": region.width, "height": region.height,
-                        "monitor": region.monitor
-                    },
-                    "audio_cfg": {
-                        "mic_device":    audio_cfg.mic_device,
-                        "sys_device_id": audio_cfg.sys_device_id,
-                        "mic_device_id": audio_cfg.mic_device_id,
-                    },
-                    "enc_cfg": {
-                        "fps": enc_cfg.fps,
-                        "quality_crf": enc_cfg.quality_crf.unwrap_or(28),
-                        "format": enc_cfg.format.as_deref().unwrap_or("mp4"),
-                        "hw_encoder": enc_cfg.hw_encoder.as_deref().unwrap_or("h264_nvenc")
-                    }
-                }
-            });
+            let cmd = cliplite_core::ipc::Command::Start {
+                args: to_start_args(&ffmpeg_path, &output_str, &region, &audio_cfg, &enc_cfg, None, 0),
+            };
 
-            let line = serde_json::to_string(&cmd_json).unwrap();
+            let line = ipc_line(&cmd);
             child.send_line(&line).map_err(|e| format!("IPC send failed: {e}"))?;
 
             // Store child handle — no blocking stdout read here
@@ -328,45 +352,6 @@ pub async fn start_recording(
                 rec.is_paused      = false;
             }
 
-            tray::set_recording_state(&app, true);
-            return Ok(output_str);
-        }
-
-        // Non-Windows: fall through to std::process path
-        #[cfg(not(windows))]
-        {
-            // On non-Windows just use std::process::Command
-            use std::process::{Command, Stdio};
-            use std::io::Write;
-
-            let mut proc = Command::new(&recorder_exe)
-                .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to spawn recorder: {e}"))?;
-
-            let cmd_json = serde_json::json!({
-                "cmd": "start",
-                "args": {
-                    "ffmpeg_path": ffmpeg_path.to_string_lossy(),
-                    "output_path": output_str,
-                    "region": {"x":region.x,"y":region.y,"width":region.width,"height":region.height,"monitor":region.monitor},
-                    "audio_cfg": {"mic_device":audio_cfg.mic_device,"sys_device_id":audio_cfg.sys_device_id},
-                    "enc_cfg": {"fps":enc_cfg.fps,"quality_crf":enc_cfg.quality_crf.unwrap_or(28),"format":enc_cfg.format.as_deref().unwrap_or("mp4"),"hw_encoder":enc_cfg.hw_encoder.as_deref().unwrap_or("libx264")}
-                }
-            });
-            if let Some(stdin) = &mut proc.stdin {
-                let line = serde_json::to_string(&cmd_json).unwrap() + "\n";
-                stdin.write_all(line.as_bytes()).ok();
-                stdin.flush().ok();
-            }
-            {
-                let mut rec = recorder.0.lock().unwrap();
-                rec.recorder_proc  = Some(proc);
-                rec.output_path    = Some(output_str.clone());
-                rec.start_time     = Some(std::time::Instant::now());
-                rec.paused_duration = 0.0;
-                rec.is_paused      = false;
-            }
             tray::set_recording_state(&app, true);
             return Ok(output_str);
         }
@@ -401,7 +386,7 @@ pub async fn stop_recording(
             rec.is_paused  = false;
 
             // 1. Send stop command
-            child.send_line("{\"cmd\":\"stop\"}").ok();
+            child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
 
             // 2. Close stdin → sends EOF to recorder's BufReader → main loop exits
             child.close_stdin();
@@ -427,45 +412,9 @@ pub async fn stop_recording(
             // child drops here, remaining handles closed via Drop
             final_path
         }
-        // ── std::process::Child recorder path (non-Windows fallback) ──────
-        else if let Some(mut proc) = rec.recorder_proc.take() {
-            use std::io::Write;
-            let output_path = rec.output_path.take().unwrap_or_default();
-            rec.start_time = None;
-
-            if let Some(stdin) = proc.stdin.as_mut() {
-                let _ = stdin.write_all(b"{\"cmd\":\"stop\"}\n");
-                let _ = stdin.flush();
-            }
-            drop(proc.stdin.take());
-
-            let mut final_path = output_path;
-            if let Some(stdout) = proc.stdout.take() {
-                use std::io::BufRead;
-                let mut reader = std::io::BufReader::new(stdout);
-                let mut line = String::new();
-                for _ in 0..10 {
-                    line.clear();
-                    if reader.read_line(&mut line).is_err() { break; }
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
-                        if v["event"] == "stopped" {
-                            final_path = v["path"].as_str().unwrap_or("").to_string();
-                            break;
-                        }
-                    }
-                }
-            }
-            let t0 = std::time::Instant::now();
-            loop {
-                if let Ok(Some(_)) = proc.try_wait() { break; }
-                if t0.elapsed().as_secs() > 25 { let _ = proc.kill(); break; }
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            final_path
-        }
-        // ── Direct FFmpeg fallback ─────────────────────────────────────────
+        // ── No recorder child: nothing was recording ─────────────────────
         else {
-            rec.stop().map_err(|e| e.to_string())?
+            rec.output_path.take().unwrap_or_default()
         }
     };
 
@@ -515,7 +464,7 @@ pub fn get_recording_status(recorder: State<'_, RecorderState>) -> RecordingStat
 
 #[tauri::command]
 pub async fn start_replay(
-    app:            AppHandle,
+    _app:           AppHandle,
     region:         Region,
     audio_cfg:      AudioConfig,
     enc_cfg:        EncConfig,
@@ -541,40 +490,18 @@ pub async fn start_replay(
         {
             let old = recorder.0.lock().unwrap().replay_child.take();
             if let Some(old_child) = old {
-                old_child.send_line("{\"cmd\":\"stop_replay\"}").ok();
-                old_child.send_line("{\"cmd\":\"stop\"}").ok();
+                old_child.send_line(&ipc_line(&cliplite_core::ipc::Command::StopReplay)).ok();
+                old_child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 // old_child drops here, closing all Win32 handles
             }
         }
 
-        let cmd_json = serde_json::json!({
-            "cmd": "start_replay",
-            "args": {
-                "ffmpeg_path": ffmpeg_path.to_string_lossy(),
-                "output_path": "",
-                "region": {
-                    "x": region.x, "y": region.y,
-                    "width": region.width, "height": region.height,
-                    "monitor": region.monitor
-                },
-                "audio_cfg": {
-                    "mic_device":    audio_cfg.mic_device,
-                    "sys_device_id": audio_cfg.sys_device_id,
-                    "mic_device_id": audio_cfg.mic_device_id,
-                },
-                // Replay gets its own separate named pipe so recording audio is unaffected
-                "audio_pipe": r"\\.\pipe\cliplite_sysaudio_replay",
-                "enc_cfg": {
-                    "fps": enc_cfg.fps,
-                    "quality_crf": enc_cfg.quality_crf.unwrap_or(28),
-                    "format": enc_cfg.format.as_deref().unwrap_or("mp4"),
-                    "hw_encoder": enc_cfg.hw_encoder.as_deref().unwrap_or("h264_nvenc")
-                },
-                "max_replay_buffer_size_mb": settings.max_replay_buffer_size_mb
-            }
-        });
-        let line = serde_json::to_string(&cmd_json).unwrap();
+        let cmd = cliplite_core::ipc::Command::StartReplay {
+            args: to_start_args(&ffmpeg_path, "", &region, &audio_cfg, &enc_cfg,
+                                Some(REPLAY_AUDIO_PIPE), settings.max_replay_buffer_size_mb),
+        };
+        let line = ipc_line(&cmd);
 
         let child = spawn_recorder_isolated(&recorder_exe)
             .map_err(|e| format!("Failed to spawn replay recorder: {e}"))?;
@@ -608,8 +535,8 @@ pub async fn stop_replay(recorder: State<'_, RecorderState>) -> Result<(), Strin
     {
         let child = recorder.0.lock().unwrap().replay_child.take();
         if let Some(child) = child {
-            child.send_line("{\"cmd\":\"stop_replay\"}").ok();
-            child.send_line("{\"cmd\":\"stop\"}").ok();
+            child.send_line(&ipc_line(&cliplite_core::ipc::Command::StopReplay)).ok();
+            child.send_line(&ipc_line(&cliplite_core::ipc::Command::Stop)).ok();
             // Brief pause so the subprocess can flush StopReplay event and clean temp file.
             // Drop the Arc *after* the sleep so handles stay open during the flush.
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -634,12 +561,8 @@ pub async fn save_replay(
     let settings   = settings_state.0.lock().unwrap().clone();
     let output_str = settings.build_replay_output_path(".mp4").to_string_lossy().to_string();
 
-    let cmd = serde_json::json!({
-        "cmd": "save_replay",
-        "secs": secs,
-        "output_path": output_str,
-    });
-    let line = serde_json::to_string(&cmd).unwrap();
+    let cmd = cliplite_core::ipc::Command::SaveReplay { secs, output_path: output_str.clone() };
+    let line = ipc_line(&cmd);
 
     #[cfg(windows)]
     {
@@ -690,32 +613,18 @@ pub async fn save_replay(
         // Retrieve the original start args stored on the old child for replay config
         // (region, audio, enc). We stored them in settings already.
         // Build the start_replay JSON using those settings fields.
-        let restart_json = serde_json::json!({
-            "cmd": "start_replay",
-            "args": {
-                "ffmpeg_path": ffmpeg_path.to_string_lossy(),
-                "output_path": "",
-                "region": {
-                    "x": 0, "y": 0,
-                    "width": 1920, "height": 1080,
-                    "monitor": settings.selected_monitor
-                },
-                "audio_pipe": r"\\.\pipe\cliplite_sysaudio_replay",
-                "audio_cfg": {
-                    "mic_device":    null,
-                    "sys_device_id": settings.sys_audio_device_id,
-                    "mic_device_id": settings.mic_device_id,
-                },
-                "enc_cfg": {
-                    "fps": settings.default_fps,
-                    "quality_crf": settings.default_quality_crf,
-                    "format": settings.default_format,
-                    "hw_encoder": hw_encoder
-                },
-                "max_replay_buffer_size_mb": settings.max_replay_buffer_size_mb
-            }
-        });
-        let restart_line = serde_json::to_string(&restart_json).unwrap();
+        // NOTE: hardcoded 1920x1080 region and dropped mic name are pre-existing
+        // behaviour, kept for the baseline; WS2 removes this restart path.
+        let restart_args = to_start_args(
+            &ffmpeg_path, "",
+            &Region { x: 0, y: 0, width: 1920, height: 1080, monitor: settings.selected_monitor },
+            &AudioConfig { mic_device: None, sys_device_id: settings.sys_audio_device_id.clone(),
+                           mic_device_id: settings.mic_device_id.clone() },
+            &EncConfig { fps: settings.default_fps, quality_crf: Some(settings.default_quality_crf),
+                         format: Some(settings.default_format.clone()), hw_encoder: Some(hw_encoder.clone()) },
+            Some(REPLAY_AUDIO_PIPE), settings.max_replay_buffer_size_mb,
+        );
+        let restart_line = ipc_line(&cliplite_core::ipc::Command::StartReplay { args: restart_args });
 
         match spawn_recorder_isolated(&recorder_exe) {
             Ok(new_child) => {
@@ -830,7 +739,7 @@ fn enumerate_monitors_windows() -> Vec<MonitorInfo> {
     }
 
     let mut ctx = Context { monitors: vec![] };
-    unsafe { EnumDisplayMonitors(HDC::default(), None, Some(callback), LPARAM(&mut ctx as *mut _ as isize)); }
+    unsafe { let _ = EnumDisplayMonitors(HDC::default(), None, Some(callback), LPARAM(&mut ctx as *mut _ as isize)); }
     ctx.monitors
 }
 
@@ -1010,49 +919,7 @@ pub fn simulate_hotkey(app: AppHandle, action: String) -> Result<(), String> {
     }
 }
 
-/// Handle a hotkey action - called by the backend hotkey listener.
-/// This routes the hotkey to the appropriate handler.
-#[tauri::command]
-pub fn handle_hotkey(app: AppHandle, action: String) -> Result<(), String> {
-    log::info!("[hotkey] Handling action: {action}");
-    
-    match action.as_str() {
-        "start-recording" => {
-            log::info!("[hotkey] Start recording");
-            app.emit("hotkey-start-recording", ()).ok();
-        }
-        "stop-recording" => {
-            log::info!("[hotkey] Stop recording");
-            app.emit("hotkey-stop-recording", ()).ok();
-        }
-        "pause-recording" => {
-            log::info!("[hotkey] Pause recording");
-            app.emit("hotkey-pause-recording", ()).ok();
-        }
-        "open-library" => {
-            log::info!("[hotkey] Open library");
-            if let Some(win) = app.get_webview_window("main") {
-                win.show().ok();
-                win.set_focus().ok();
-            }
-            app.emit("hotkey-open-library", ()).ok();
-        }
-        "replay-toggle" => {
-            log::info!("[hotkey] Toggle replay");
-            app.emit("hotkey-replay-toggle", ()).ok();
-        }
-        "replay-save" => {
-            log::info!("[hotkey] Save replay");
-            app.emit("hotkey-replay-save", ()).ok();
-        }
-        "annotate" => {
-            log::info!("[hotkey] Annotate");
-            app.emit("hotkey-annotate", ()).ok();
-        }
-        _ => {
-            log::warn!("[hotkey] Unknown action: {action}");
-        }
-    }
-    
-    Ok(())
-}
+
+#[cfg(test)]
+#[path = "commands_ipc_tests.rs"]
+mod ipc_tests;

@@ -10,70 +10,10 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
-use serde::{Deserialize, Serialize};
 
-#[path = "rec_recorder.rs"] mod recorder;
-#[path = "rec_audio.rs"]   mod audio;
-#[path = "rec_ffmpeg.rs"]  mod ffmpeg;
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "cmd", rename_all = "snake_case")]
-enum Command {
-    Start       { args: StartArgs },
-    Stop,
-    Pause,
-    Resume,
-    Status,
-    StartReplay { args: StartArgs },
-    StopReplay,
-    SaveReplay  { secs: u32, output_path: String },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StartArgs {
-    pub ffmpeg_path:  String,
-    pub output_path:  String,
-    pub region:       Region,
-    pub audio_cfg:    AudioConfig,
-    pub enc_cfg:      EncConfig,
-    /// Named pipe for audio. Recording uses cliplite_sysaudio, replay uses cliplite_sysaudio_replay.
-    /// If absent, defaults to cliplite_sysaudio.
-    #[serde(default)]
-    pub audio_pipe:   Option<String>,
-    /// Max size in MB for temporary replay buffer files (0 = unlimited).
-    /// When exceeded, oldest temp files are automatically cleaned up.
-    #[serde(default)]
-    pub max_replay_buffer_size_mb: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Region {
-    pub x: i32, pub y: i32, pub width: i32, pub height: i32, pub monitor: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AudioConfig {
-    pub mic_device:    Option<String>,
-    pub sys_device_id: Option<String>,
-    pub mic_device_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct EncConfig {
-    pub fps: u32, pub quality_crf: u32, pub format: String, pub hw_encoder: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum Event {
-    Started       { path: String },
-    Stopped       { path: String },
-    ReplayStarted { path: String },
-    ReplayStopped,
-    ReplaySaved   { path: String },
-    Status        { is_recording: bool, is_paused: bool, elapsed: f64, replay_active: bool },
-    Error         { message: String },
-}
+mod recorder;
+use cliplite_core::{audio, ffmpeg};
+use cliplite_core::ipc::{AudioConfig, Command, Event, StartArgs};
 
 fn emit(event: &Event) {
     let json = serde_json::to_string(event).unwrap_or_default();
@@ -84,11 +24,7 @@ fn emit(event: &Event) {
 /// Get the ClipLite app directory (~/.cliplite).
 /// All app files (settings, library, temp files, etc.) are stored here.
 fn get_app_dir() -> std::path::PathBuf {
-    // Same rule as settings::app_dir() in the UI process (separate binary).
-    match std::env::var_os("CLIPLITE_HOME") {
-        Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
-        _ => dirs::home_dir().unwrap_or_default().join(".cliplite"),
-    }
+    cliplite_core::paths::app_dir()
 }
 
 /// Get the replay temp directory (~/.cliplite/temp).
@@ -461,7 +397,7 @@ fn main() {
                 }
 
                 // ── STEP 2: Extract the clip from the sealed MKV ─────────────
-                let mut ffmpeg_stderr = String::new();
+                let ffmpeg_stderr: String;
 
                 #[cfg(windows)]
                 let extract_ok = {
@@ -505,21 +441,6 @@ fn main() {
                         }
                     }
                 };
-                #[cfg(not(windows))]
-                let extract_ok = {
-                    match std::process::Command::new(&ffmpeg)
-                        .args(["-y", "-ss", &format!("{start_secs:.3}"), "-i", &src,
-                               "-c:v", "copy", "-c:a", "copy",
-                               "-avoid_negative_ts", "make_zero",
-                               "-movflags", "+faststart", &output_path])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status()
-                    {
-                        Ok(s) => s.success(),
-                        Err(e) => { ffmpeg_stderr = e.to_string(); false }
-                    }
-                };
 
                 // Delete the old sealed temp file regardless of success
                 std::fs::remove_file(&src).ok();
@@ -553,6 +474,3 @@ fn main() {
     }
 }
 
-#[cfg(test)]
-#[path = "recorder_bin_ipc_tests.rs"]
-mod ipc_golden;

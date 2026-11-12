@@ -1,3 +1,103 @@
+//! WASAPI audio: device enumeration (used by the UI) and loopback + mic
+//! capture mixed into a named pipe for FFmpeg (used by the recorder).
+use serde::{Deserialize, Serialize};
+use anyhow::Result;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioDevice {
+    pub id:   String,   // WASAPI endpoint ID
+    pub name: String,
+    pub kind: String,   // "input" | "output"
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+pub fn list_input_devices() -> Vec<AudioDevice> {
+    #[cfg(windows)] { wasapi_enum(false).unwrap_or_default() }
+    #[cfg(not(windows))] { vec![] }
+}
+
+pub fn list_output_devices() -> Vec<AudioDevice> {
+    #[cfg(windows)] { wasapi_enum(true).unwrap_or_default() }
+    #[cfg(not(windows))] { vec![] }
+}
+
+// ── Windows WASAPI enumeration ────────────────────────────────────────────────
+
+#[cfg(windows)]
+fn wasapi_enum(render: bool) -> Result<Vec<AudioDevice>> {
+    use windows::{
+        core::{BSTR, PWSTR},
+        Win32::{
+            Media::Audio::{
+                IMMDeviceEnumerator, MMDeviceEnumerator,
+                eCapture, eRender, DEVICE_STATE_ACTIVE,
+            },
+            Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
+            System::Com::{
+                CoInitializeEx, CoCreateInstance,
+                CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
+            },
+            UI::Shell::PropertiesSystem::IPropertyStore,
+        },
+    };
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if hr.is_err() && hr.0 != -2147417850i32 { hr.ok()?; }
+    }
+    let _com = ComUninitGuard;
+
+    let flow = if render { eRender } else { eCapture };
+    let enumerator: IMMDeviceEnumerator = unsafe {
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?
+    };
+    let collection = unsafe {
+        enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?
+    };
+    let count = unsafe { collection.GetCount()? };
+    let mut out = Vec::with_capacity(count as usize);
+
+    for i in 0..count {
+        let Ok(device) = (unsafe { collection.Item(i) }) else { continue };
+
+        // Endpoint ID
+        let id_pwstr: PWSTR = match unsafe { device.GetId() } {
+            Ok(p) => p, Err(_) => continue,
+        };
+        let id = unsafe { id_pwstr.to_string().unwrap_or_default() };
+        unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(id_pwstr.as_ptr() as _)) };
+
+        // Friendly name via IPropertyStore
+        let name = unsafe {
+            device.OpenPropertyStore(STGM_READ)
+                .ok()
+                .and_then(|store: IPropertyStore| {
+                    store.GetValue(&PKEY_Device_FriendlyName).ok()
+                        .and_then(|pv| BSTR::try_from(&pv).ok())
+                        .map(|b| b.to_string())
+                })
+                .unwrap_or_else(|| "Unknown".into())
+        };
+
+        out.push(AudioDevice {
+            id,
+            name,
+            kind: if render { "output".into() } else { "input".into() },
+        });
+    }
+
+    Ok(out)
+}
+
+#[cfg(windows)]
+struct ComUninitGuard;
+#[cfg(windows)]
+impl Drop for ComUninitGuard {
+    fn drop(&mut self) { unsafe { windows::Win32::System::Com::CoUninitialize(); } }
+}
+
+// ── Capture (recorder process) ───────────────────────────────────────────────
 /// WASAPI audio capture for the standalone recorder binary.
 ///
 /// Captures BOTH system audio loopback and microphone entirely in Rust/WASAPI.
@@ -5,7 +105,6 @@
 ///
 /// Both streams are mixed in Rust and written as f32le PCM (48000Hz, 2ch)
 /// to the named pipe that FFmpeg reads as its single audio input.
-use anyhow::Result;
 
 /// Fixed output format for the named pipe.
 /// We always request/convert to this regardless of device native format.
@@ -181,7 +280,7 @@ unsafe fn drain_wasapi(
 ) -> bool {
     out.clear();
     loop {
-        let pkt = match capture.GetNextPacketSize() {
+        let _frames = match capture.GetNextPacketSize() {
             Ok(0)  => break,
             Ok(n)  => n,
             Err(_) => return false,
@@ -224,7 +323,7 @@ fn capture_loop(
         Storage::FileSystem::{WriteFile, FILE_FLAGS_AND_ATTRIBUTES},
     };
 
-    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok(); }
+    unsafe { let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok(); }
 
     let enumerator: IMMDeviceEnumerator = unsafe {
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?

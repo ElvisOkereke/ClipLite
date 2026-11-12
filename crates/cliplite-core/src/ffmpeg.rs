@@ -1,7 +1,96 @@
-/// FFmpeg command builder for the standalone recorder process.
-/// Mirrors cliplite_lib::ffmpeg but uses local types.
-use std::path::Path;
-use crate::{AudioConfig, EncConfig, Region};
+/// FFmpeg discovery, process spawning, and command building.
+/// Pure Rust — no launcher.exe, no Python, no external shims.
+///
+/// Why the Tauri exe doesn't need a launcher:
+/// The Tauri app itself is built with a proper Windows application manifest
+/// (PerMonitorV2 DPI awareness, Windows 10/11 compatibility) via tauri.conf.json.
+/// FFmpeg inherits this context as a child process, so ddagrab's AcquireNextFrame
+/// delivers frames at the full monitor refresh rate — no shim needed.
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use anyhow::{anyhow, Result};
+
+// ── FFmpeg / ffprobe discovery ────────────────────────────────────────────────
+
+/// Locate FFmpeg. Checks `<exe_dir>/bin/ffmpeg[.exe]` first, then PATH.
+pub fn find_ffmpeg() -> Result<PathBuf> {
+    let dir = bin_dir();
+
+    #[cfg(windows)] let name = "ffmpeg.exe";
+    #[cfg(not(windows))] let name = "ffmpeg";
+
+    let bundled = dir.join(name);
+    if bundled.exists() { return Ok(bundled); }
+
+    which::which("ffmpeg").map_err(|_| anyhow!(
+        "FFmpeg not found.\n\
+         Place ffmpeg.exe in the bin/ folder next to the app,\n\
+         or install it on PATH.\n\
+         Download: https://ffmpeg.org/download.html"
+    ))
+}
+
+/// Locate ffprobe in the same directory as ffmpeg.
+pub fn find_ffprobe() -> Result<PathBuf> {
+    let dir = find_ffmpeg()?.parent().unwrap_or(Path::new(".")).to_path_buf();
+
+    #[cfg(windows)] let name = "ffprobe.exe";
+    #[cfg(not(windows))] let name = "ffprobe";
+
+    let p = dir.join(name);
+    if p.exists() { return Ok(p); }
+    which::which("ffprobe").map_err(|_| anyhow!("ffprobe not found"))
+}
+
+fn bin_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .unwrap_or_default()
+        .join("bin")
+}
+
+// ── Hardware encoder detection ────────────────────────────────────────────────
+
+pub fn detect_hw_encoder() -> String {
+    let ffmpeg = match find_ffmpeg() {
+        Ok(p) => p,
+        Err(_) => return "libx264".into(),
+    };
+
+    let tests: &[(&str, &[&str])] = &[
+        ("h264_nvenc", &[
+            "-f", "lavfi", "-i", "color=c=black:s=256x256:r=30,format=bgra",
+            "-frames:v", "10", "-c:v", "h264_nvenc", "-pix_fmt", "yuv420p",
+            "-f", "null", "-",
+        ]),
+        ("h264_videotoolbox", &[
+            "-f", "lavfi", "-i", "nullsrc=s=128x128,format=yuv420p",
+            "-frames:v", "5", "-c:v", "h264_videotoolbox", "-f", "null", "-",
+        ]),
+        ("h264_vaapi", &[
+            "-f", "lavfi", "-i", "nullsrc=s=128x128,format=yuv420p",
+            "-frames:v", "5", "-c:v", "h264_vaapi", "-f", "null", "-",
+        ]),
+    ];
+
+    for (enc, args) in tests {
+        let ok = Command::new(&ffmpeg)
+            .args(*args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok { return enc.to_string(); }
+    }
+    "libx264".into()
+}
+
+// ── Process spawning ──────────────────────────────────────────────────────────
+
+// ── Command builder (recorder process) ────────────────────────────────────────
+use crate::ipc::{AudioConfig, EncConfig, Region};
 
 pub fn build_record_command(
     ffmpeg:           &Path,
@@ -171,15 +260,7 @@ fn add_video_input(cmd: &mut Vec<String>, r: &Region, fps: u32) {
                 "-vf".into(), format!("crop={}:{}:{}:{}", r.width, r.height, r.x, r.y)]);
 }
 
-fn add_mic_input(cmd: &mut Vec<String>, device: &str) {
-    #[cfg(windows)]
-    cmd.extend(["-f".into(), "dshow".into(), "-i".into(), format!("audio={device}")]);
-    #[cfg(target_os = "linux")]
-    cmd.extend(["-f".into(), "pulse".into(), "-i".into(), device.into()]);
-    #[cfg(target_os = "macos")]
-    cmd.extend(["-f".into(), "avfoundation".into(), "-i".into(), format!("none:{device}")]);
-}
 
 #[cfg(test)]
-#[path = "rec_ffmpeg_tests.rs"]
+#[path = "ffmpeg_tests.rs"]
 mod tests;

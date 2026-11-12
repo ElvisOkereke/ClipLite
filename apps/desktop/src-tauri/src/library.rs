@@ -1,7 +1,6 @@
 /// SQLite clip library.
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use std::path::PathBuf;
 use anyhow::Result;
 
@@ -22,17 +21,8 @@ pub struct Clip {
 }
 
 impl Clip {
-    pub fn duration_str(&self) -> String {
-        let total = self.duration_s as u64;
-        let h = total / 3600;
-        let m = (total % 3600) / 60;
-        let s = total % 60;
-        if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
-    }
 }
 
-#[derive(Default)]
-pub struct LibraryState(pub Mutex<()>);
 
 fn db_path() -> PathBuf {
     crate::settings::app_dir().join("library.db")

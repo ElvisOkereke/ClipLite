@@ -532,9 +532,9 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "cliplite-core",
  "dirs 5.0.1",
  "env_logger",
- "insta",
  "log",
  "regex",
  "rusqlite",
@@ -548,6 +548,32 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-shell",
  "tokio",
+ "which",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "cliplite-core"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "dirs 5.0.1",
+ "insta",
+ "serde",
+ "serde_json",
+ "which",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "cliplite-recorder"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cliplite-core",
+ "dirs 5.0.1",
+ "serde",
+ "serde_json",
  "which",
  "windows 0.58.0",
 ]
