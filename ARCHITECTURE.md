@@ -39,11 +39,11 @@ ClipLite is a Tauri v2 desktop screen recorder with a **two-process design**:
 ## 2. Repository Layout
 
 ```
-LW_Clipper/
-├── ARCHITECTURE.md          ← This file (architecture + learnings)
-├── QUICKSTART.md            ← Build, run, and dev workflow
-├── cliplite/                ← Python prototype (abandoned, reference only)
-└── cliplite-tauri/          ← Active Tauri app
+cliplite-tauri/                ← repo root (Cargo workspace)
+├── Cargo.toml                 ← workspace manifest
+├── scripts/fetch-ffmpeg.ps1   ← pinned, checksum-verified FFmpeg download
+├── docs/                      ← specs, plans, benchmarks
+└── apps/desktop/              ← Tauri app (layout below is relative to this folder)
     ├── src/                 ← React + TypeScript frontend
     │   ├── App.tsx          ← Root: nav, view routing, settings load, event listeners
     │   ├── api.ts           ← Typed invoke() wrappers for all Tauri commands
@@ -55,7 +55,7 @@ LW_Clipper/
     │       ├── TrimDialog.tsx    ← In/out sliders, stream-copy export
     │       ├── SettingsView.tsx  ← All settings + keybind capture UI
     │       └── DebugPanel.tsx    ← Dev-only: backend state, simulate hotkeys
-    ├── src-tauri/
+    ├── apps/desktop/src-tauri/
     │   ├── Cargo.toml            ← Two binary targets: cliplite + cliplite-recorder
     │   ├── tauri.conf.json       ← Window config, WebView2 browser args
     │   ├── build.rs              ← Embeds Windows DPI/compat manifest via tauri-build
@@ -247,7 +247,7 @@ event.listen not allowed. Permissions associated with this command:
 core:event:allow-listen, core:event:default
 ```
 
-**Fix:** `src-tauri/capabilities/default.json` with `"core:default"` (which includes `core:event:default`, bundling `allow-listen`, `allow-emit`, and `allow-unlisten`).
+**Fix:** `apps/desktop/src-tauri/capabilities/default.json` with `"core:default"` (which includes `core:event:default`, bundling `allow-listen`, `allow-emit`, and `allow-unlisten`).
 
 ```json
 {
@@ -264,7 +264,7 @@ core:event:allow-listen, core:event:default
 }
 ```
 
-> **Note:** The `gen/schemas/capabilities.json` file in the `gen/` directory is auto-generated and empty — it is not the capabilities configuration. The actual config must be in `src-tauri/capabilities/`.
+> **Note:** The `gen/schemas/capabilities.json` file in the `gen/` directory is auto-generated and empty — it is not the capabilities configuration. The actual config must be in `apps/desktop/src-tauri/capabilities/`.
 
 ---
 
@@ -383,13 +383,13 @@ ffmpeg -y -ss 0 -i input.mp4 -frames:v 1 -vf scale=320:-1 thumb.jpg
 ### Prerequisites
 - Rust 1.77+ (`rustup install stable`)
 - Node.js 18+ + npm
-- `ffmpeg.exe` + `ffprobe.exe` in `cliplite-tauri/src-tauri/bin/`
+- `ffmpeg.exe` + `ffprobe.exe` in `apps/desktop/src-tauri/bin/` (run `scripts/fetch-ffmpeg.ps1`)
 - Visual Studio Build Tools (MSVC linker)
 - WebView2 Runtime (bundled with Windows 10 22H2+)
 
 ### Development
 ```powershell
-cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri"
+cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri\apps\desktop"
 npm install
 npx tauri dev    # starts Vite dev server + Rust watcher, auto-reloads on changes
 ```
@@ -398,12 +398,12 @@ npx tauri dev    # starts Vite dev server + Rust watcher, auto-reloads on change
 
 ### Production build
 ```powershell
-cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri"
+cd "Y:\CODING PROJECTS\LW_Clipper\cliplite-tauri\apps\desktop"
 npx tauri build
 # Outputs:
-#   src-tauri/target/release/cliplite.exe
-#   src-tauri/target/release/cliplite-recorder.exe
-#   src-tauri/target/release/bundle/nsis/ClipLite_1.0.0_x64-setup.exe
+#   target/release/cliplite.exe
+#   target/release/cliplite-recorder.exe
+#   target/release/bundle/nsis/ClipLite_1.0.0_x64-setup.exe
 ```
 
 ### Manual rebuild (without tauri CLI)
@@ -415,7 +415,7 @@ npm run build
 Stop-Process -Name "cliplite" -Force -ErrorAction SilentlyContinue
 
 # 3. Build Rust
-cargo build --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
 **Both binaries must be in the same directory.** `find_recorder()` looks for `cliplite-recorder.exe` next to `cliplite.exe`.
@@ -440,7 +440,7 @@ ffmpeg -i recording.mp4 -vf "showinfo" -f null NUL 2>&1 |
 ### Hotkeys not working
 1. Check `~/.cliplite/debug.log` for `[hotkeys] FIRED:` and `emit_to main OK:` lines.
 2. Check browser DevTools console for `[hotkeys] ✓ registered` lines — if you see `✗ FAILED ... core:event:allow-listen`, the `capabilities/default.json` file is missing.
-3. Check that `src-tauri/capabilities/default.json` exists with `"core:default"` in permissions.
+3. Check that `apps/desktop/src-tauri/capabilities/default.json` exists with `"core:default"` in permissions.
 4. Use the Debug Panel (🐛 button) to simulate hotkeys and verify events reach the frontend.
 
 ### Verify DPI manifest is embedded
@@ -470,7 +470,7 @@ cargo build --release --bin cliplite-recorder
 | Pitfall | Consequence | Fix |
 |---|---|---|
 | **NVIDIA/GPU audio for system audio** | 460ms stalls throughout recording | Use USB/Realtek; UI warns + auto-excludes GPU devices |
-| `capabilities/default.json` missing | `listen()` throws permission error, hotkeys silently broken | Create `src-tauri/capabilities/default.json` with `"core:default"` |
+| `capabilities/default.json` missing | `listen()` throws permission error, hotkeys silently broken | Create `apps/desktop/src-tauri/capabilities/default.json` with `"core:default"` |
 | `app.emit()` from background thread | Events may not reach webview listeners | Use `app.get_webview_window("main").emit()` instead |
 | Hotkey `useEffect` re-registering on state change | Race window where no listener is active | Register once with `[]` deps; use refs for current handlers |
 | Frontend changes not reflected in running app | Editing `.tsx` while running compiled exe | Use `npx tauri dev` — HMR applies changes instantly |
