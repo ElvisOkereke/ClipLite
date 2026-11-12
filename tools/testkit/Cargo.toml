@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+cliplite-core.workspace = true
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
 flate2 = "1"

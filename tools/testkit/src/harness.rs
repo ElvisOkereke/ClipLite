@@ -32,9 +32,34 @@ pub struct Harness {
     _job: Job,
 }
 
+/// Audio devices for the isolated settings. A real user typically has system
+/// audio + mic selected; with none, the UI auto-selects a mic (mic-only path).
+#[derive(Debug, Clone, Default)]
+pub struct TestAudio {
+    pub sys_id: Option<String>,
+    pub mic_id: Option<String>,
+    pub mic_name: Option<String>,
+}
+
+impl TestAudio {
+    /// First output device as system audio, first input device as mic.
+    pub fn first_devices() -> TestAudio {
+        let out = cliplite_core::audio::list_output_devices();
+        let inp = cliplite_core::audio::list_input_devices();
+        TestAudio {
+            sys_id: out.first().map(|d| d.id.clone()),
+            mic_id: inp.first().map(|d| d.id.clone()),
+            mic_name: inp.first().map(|d| d.name.clone()),
+        }
+    }
+}
+
 /// Settings JSON for the isolated `CLIPLITE_HOME` (partial; serde defaults fill the rest).
-pub fn test_settings(clips: &Path, buffer_secs: u32, chord: &str) -> serde_json::Value {
+pub fn test_settings(clips: &Path, buffer_secs: u32, chord: &str, audio: &TestAudio) -> serde_json::Value {
     serde_json::json!({
+        "sys_audio_device_id": audio.sys_id,
+        "mic_device_id": audio.mic_id,
+        "mic_device": audio.mic_name,
         "hotkeys": { "replay_save": chord, "start": RECORD_START_CHORD, "stop": RECORD_STOP_CHORD },
         "replay_buffer_duration_secs": buffer_secs,
         "replay_output_dir": clips,
@@ -58,10 +83,13 @@ impl Harness {
         let app_dir = app.parent().unwrap().to_path_buf();
         kill_app_procs(&app_dir); // stale processes from an earlier crashed run
 
+        // absolute, so the app (and its child processes) never see relative paths
+        let out = std::path::absolute(out)?;
         let home = out.join("home");
         let clips = home.join("clips");
         std::fs::create_dir_all(&clips)?;
-        std::fs::write(home.join("settings.json"), serde_json::to_vec_pretty(&test_settings(&clips, buffer_secs, chord))?)?;
+        let audio = TestAudio::first_devices();
+        std::fs::write(home.join("settings.json"), serde_json::to_vec_pretty(&test_settings(&clips, buffer_secs, chord, &audio))?)?;
 
         let job = Job::new_kill_on_close(true)?;
         let child = job.spawn(
@@ -294,8 +322,19 @@ mod tests {
     }
 
     #[test]
+    fn settings_include_audio_like_a_real_user() {
+        let audio = TestAudio { sys_id: Some("sys-1".into()), mic_id: Some("mic-1".into()), mic_name: Some("Mic".into()) };
+        let v = test_settings(Path::new("c"), 60, DEFAULT_CHORD, &audio);
+        assert_eq!(v["sys_audio_device_id"], "sys-1");
+        assert_eq!(v["mic_device_id"], "mic-1");
+        assert_eq!(v["mic_device"], "Mic");
+        let none = test_settings(Path::new("c"), 60, DEFAULT_CHORD, &TestAudio::default());
+        assert!(none["sys_audio_device_id"].is_null());
+    }
+
+    #[test]
     fn settings_use_given_chord_and_dirs() {
-        let v = test_settings(Path::new(r"C:\x y\clips"), 60, DEFAULT_CHORD);
+        let v = test_settings(Path::new(r"C:\x y\clips"), 60, DEFAULT_CHORD, &TestAudio::default());
         assert_eq!(v["hotkeys"]["replay_save"], "Ctrl+Alt+Shift+F11");
         assert_eq!(v["replay_buffer_duration_secs"], 60);
         assert_eq!(v["replay_output_dir"], r"C:\x y\clips");

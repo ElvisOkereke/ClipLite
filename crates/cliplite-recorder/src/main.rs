@@ -339,14 +339,15 @@ fn main() {
                             emit(Event::ReplayStarted { path: tmp_str }, &cid);
                         } else {
                             // FFmpeg exited immediately — read its stderr for the error
-                            let err_msg = if let Some(mut p) = rr.process.take() {
-                                let mut buf = Vec::new();
-                                if let Some(mut stderr) = p.stderr.take() {
-                                    use std::io::Read;
-                                    stderr.read_to_end(&mut buf).ok();
-                                }
-                                String::from_utf8_lossy(&buf).chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
-                            } else { "FFmpeg exited immediately".into() };
+                            // stderr is drained continuously into rr.stderr_tail
+                            rr.process.take();
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                            let tail = rr.stderr_tail.text();
+                            let err_msg = if tail.is_empty() {
+                                "FFmpeg exited immediately".to_string()
+                            } else {
+                                tail.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
+                            };
                             *replay_path.lock().unwrap() = String::new();
                             emit(Event::Error { message: format!("Replay FFmpeg failed: {err_msg}") }, &cid);
                         }

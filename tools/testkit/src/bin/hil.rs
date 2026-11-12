@@ -58,7 +58,9 @@ enum Cmd {
         runs: usize,
         #[arg(long, default_value_t = 60)]
         duration_secs: u64,
-        #[arg(long, default_value = "exclusive")]
+        /// borderless by default: in exclusive fullscreen the current capture
+        /// (ddagrab) dies with DXGI_ERROR_ACCESS_LOST, which would hide its cost.
+        #[arg(long, default_value = "borderless")]
         mode: String,
         #[arg(long, default_value_t = 100)]
         gpu_load: u8,
@@ -357,6 +359,7 @@ mod win {
                 let mut procs = csv(&run_dir.join("procs.csv"), "t_s,name,pid,private_bytes,working_set,handles,cpu_time_ms,write_bytes")?;
                 let mut cpu: HashMap<u32, (u64, u64)> = HashMap::new();
                 let mut private_sum = Vec::new();
+                let mut capture_alive = true;
                 let t0 = Instant::now();
                 loop {
                     if let Ok(Some(_)) = game.child.try_wait() {
@@ -376,6 +379,9 @@ mod win {
                         sum += p.private_bytes;
                     }
                     private_sum.push(sum);
+                    if scenario != "baseline" && !samples.iter().any(|p| p.name.eq_ignore_ascii_case("ffmpeg.exe")) {
+                        capture_alive = false;
+                    }
                     std::thread::sleep(Duration::from_secs(1));
                 }
                 let wall = t0.elapsed().as_secs_f64();
@@ -393,11 +399,15 @@ mod win {
                     stats.avg_fps, stats.p1_low_fps, stats.p99_frametime_ms, bench::cpu_pct(cpu_ms, wall, cores), private_mb,
                     note.map(|n| format!(" [{n}]")).unwrap_or_default()
                 );
+                if !capture_alive {
+                    println!("  ! capture (ffmpeg) was not running for the whole run — this run's overhead is not representative");
+                }
                 results.push(serde_json::json!({
                     "run": k,
                     "stats": stats,
                     "cliplite_cpu_pct": bench::cpu_pct(cpu_ms, wall, cores),
                     "cliplite_private_mb": private_mb,
+                    "capture_alive": capture_alive,
                     "note": note,
                 }));
                 std::thread::sleep(Duration::from_secs(3));

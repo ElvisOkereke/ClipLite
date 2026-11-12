@@ -5,6 +5,70 @@ use std::process::Child;
 use std::time::Instant;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
+use std::collections::VecDeque;
+use std::io::Read;
+use std::sync::{Arc, Mutex};
+
+/// Last lines FFmpeg wrote to stderr (progress lines included), shared with
+/// the drain thread. Draining also prevents FFmpeg from blocking on a full pipe.
+#[derive(Clone, Default)]
+pub struct StderrTail(Arc<Mutex<VecDeque<String>>>);
+
+impl StderrTail {
+    pub const CAPACITY: usize = 64;
+
+    pub fn push(&self, line: String) {
+        let mut q = self.0.lock().unwrap();
+        if q.len() == Self::CAPACITY {
+            q.pop_front();
+        }
+        q.push_back(line);
+    }
+
+    pub fn text(&self) -> String {
+        self.0.lock().unwrap().iter().cloned().collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// Split FFmpeg output into lines; progress updates are terminated by `\r`.
+pub fn drain_lines(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(bytes)
+        .split(['\r', '\n'])
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Read FFmpeg's stderr until EOF: keep a tail and log non-progress lines.
+fn spawn_stderr_drain(mut stderr: std::process::ChildStderr, tail: StderrTail, purpose: &'static str) {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        let mut pending: Vec<u8> = Vec::new();
+        loop {
+            let n = match stderr.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            pending.extend_from_slice(&buf[..n]);
+            // emit only complete lines; keep the trailing partial line
+            if let Some(last) = pending.iter().rposition(|b| *b == b'\n' || *b == b'\r') {
+                let complete: Vec<u8> = pending.drain(..=last).collect();
+                for line in drain_lines(&complete) {
+                    if !line.starts_with("frame=") {
+                        tracing::info!(target: "ffmpeg", purpose, "{line}");
+                    }
+                    tail.push(line);
+                }
+            }
+        }
+        for line in drain_lines(&pending) {
+            tracing::info!(target: "ffmpeg", purpose, "{line}");
+            tail.push(line);
+        }
+        tracing::info!(target: "ffmpeg", purpose, "ffmpeg stderr closed (process ended)");
+    });
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RecordingStatus {
@@ -22,6 +86,8 @@ pub struct RecorderInner {
     pub is_paused:       bool,
     #[cfg(windows)]
     pub sys_audio:       Option<cliplite_core::audio::SysAudioCapture>,
+    /// Tail of the current FFmpeg's stderr.
+    pub stderr_tail:     StderrTail,
 }
 
 impl Default for RecorderInner {
@@ -35,6 +101,7 @@ impl Default for RecorderInner {
             is_paused:       false,
             #[cfg(windows)]
             sys_audio:       None,
+            stderr_tail:     StderrTail::default(),
         }
     }
 }
@@ -70,7 +137,12 @@ impl RecorderInner {
         if let Some(p) = &mut self.process {
             if matches!(p.try_wait(), Ok(None)) { return Err(anyhow!("Already recording")); }
         }
-        let child = spawn_ffmpeg(cmd)?;
+        let mut child = spawn_ffmpeg(cmd)?;
+        tracing::info!(target: "ffmpeg", pid = child.id(), args = %cmd.join(" "), "ffmpeg command");
+        self.stderr_tail = StderrTail::default();
+        if let Some(se) = child.stderr.take() {
+            spawn_stderr_drain(se, self.stderr_tail.clone(), "capture");
+        }
         self.process         = Some(child);
         self.output_path     = Some(output_path);
         self.start_time      = Some(Instant::now());
@@ -203,3 +275,23 @@ fn resume_process(pid: u32) -> Result<()> {
 fn suspend_process(pid: u32) -> Result<()> { std::process::Command::new("kill").args(["-STOP", &pid.to_string()]).status().ok(); Ok(()) }
 #[cfg(not(windows))]
 fn resume_process(pid: u32) -> Result<()> { std::process::Command::new("kill").args(["-CONT", &pid.to_string()]).status().ok(); Ok(()) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_ffmpeg_output_on_cr_and_lf() {
+        let lines = drain_lines(&b"Input #0\nframe=  1 fps=0\rframe=  2 fps=1\r\n[ddagrab] AcquireNextFrame failed: 887a0026\n"[..]);
+        assert_eq!(lines, vec!["Input #0", "frame=  1 fps=0", "frame=  2 fps=1", "[ddagrab] AcquireNextFrame failed: 887a0026"]);
+    }
+
+    #[test]
+    fn tail_keeps_last_lines_only() {
+        let tail = StderrTail::default();
+        for i in 0..100 { tail.push(format!("line {i}")); }
+        let text = tail.text();
+        assert!(text.starts_with(&format!("line {}", 100 - StderrTail::CAPACITY)));
+        assert!(text.ends_with("line 99"));
+    }
+}

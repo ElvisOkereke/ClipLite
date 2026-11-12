@@ -631,6 +631,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "cliplite-core",
  "flate2",
  "serde",
  "serde_json",

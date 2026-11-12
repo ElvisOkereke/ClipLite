@@ -65,14 +65,21 @@ pub fn foreign_capture(dir: &Path) -> Vec<String> {
 }
 
 /// Recursive size of a directory in bytes (0 if missing).
+///
+/// Stats each file by path: `DirEntry::metadata` comes from the directory
+/// listing, which on NTFS reports stale sizes for files another process still
+/// has open (e.g. the replay buffer's MKV).
 pub fn dir_size(dir: &Path) -> u64 {
     std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
-                .map(|e| match e.metadata() {
-                    Ok(m) if m.is_dir() => dir_size(&e.path()),
-                    Ok(m) => m.len(),
-                    Err(_) => 0,
+                .map(|e| {
+                    let path = e.path();
+                    match std::fs::metadata(&path) {
+                        Ok(m) if m.is_dir() => dir_size(&path),
+                        Ok(m) => m.len(),
+                        Err(_) => 0,
+                    }
                 })
                 .sum()
         })
@@ -90,6 +97,22 @@ mod tests {
         let s = sample(&[name.as_str()], me.parent().unwrap());
         let mine = s.iter().find(|p| p.pid == std::process::id()).expect("own process sampled");
         assert!(mine.private_bytes > 0 && mine.working_set > 0 && mine.handles > 0);
+    }
+
+    #[test]
+    fn dir_size_sees_bytes_of_files_still_open_for_writing() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("clip lite dirsize test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let mut f = std::fs::File::create(dir.join("sub").join("growing.mkv")).unwrap();
+        f.write_all(&vec![7u8; 1024]).unwrap();
+        f.flush().unwrap();
+        let _ = dir_size(&dir); // directory listing caches the size seen here
+        f.write_all(&vec![7u8; 3 * 1024 * 1024]).unwrap();
+        f.flush().unwrap();
+        assert!(dir_size(&dir) >= 3 * 1024 * 1024, "stale size for an open file");
+        drop(f);
     }
 
     #[test]

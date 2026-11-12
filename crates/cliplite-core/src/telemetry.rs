@@ -74,6 +74,7 @@ where
 /// flushes and stops the background writer).
 pub fn init_json_logging(file_stem: &str) -> Option<WorkerGuard> {
     let dir = crate::paths::app_dir().join("logs");
+    let _ = std::fs::create_dir_all(&dir);
     let appender = match Builder::new()
         .rotation(Rotation::DAILY)
         .filename_prefix(file_stem)
