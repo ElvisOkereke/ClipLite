@@ -27,10 +27,29 @@ fn ft_ms(ft: FILETIME) -> u64 {
 /// owner's own ClipLite elsewhere is never counted).
 pub fn sample(names: &[&str], dir: &Path) -> Vec<ProcSample> {
     let wanted = |n: &str| names.iter().any(|w| w.eq_ignore_ascii_case(n));
-    crate::job::processes_under(dir)
-        .into_iter()
-        .filter(|p| wanted(&p.name))
-        .filter_map(|p| unsafe {
+    crate::job::processes_under(dir).into_iter().filter(|p| wanted(&p.name)).filter_map(|p| measure(&p)).collect()
+}
+
+/// Sample `roots` and all their descendants — for ClipLite that is the UI
+/// process, its WebView2 renderers, the recorder and its FFmpeg children.
+pub fn sample_tree(roots: &[u32]) -> Vec<ProcSample> {
+    let all = list_processes();
+    let mut keep: Vec<u32> = roots.iter().copied().filter(|r| all.iter().any(|p| p.pid == *r)).collect();
+    let mut i = 0;
+    while i < keep.len() {
+        let parent = keep[i];
+        for p in &all {
+            if p.parent == parent && p.pid != parent && !keep.contains(&p.pid) {
+                keep.push(p.pid);
+            }
+        }
+        i += 1;
+    }
+    all.iter().filter(|p| keep.contains(&p.pid)).filter_map(measure).collect()
+}
+
+fn measure(p: &crate::job::ProcInfo) -> Option<ProcSample> {
+    unsafe {
             let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, p.pid).ok()?;
             let mut mem = PROCESS_MEMORY_COUNTERS_EX { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32, ..Default::default() };
             let mem_ok = GetProcessMemoryInfo(h, &mut mem as *mut _ as *mut PROCESS_MEMORY_COUNTERS, mem.cb).is_ok();
@@ -50,8 +69,7 @@ pub fn sample(names: &[&str], dir: &Path) -> Vec<ProcSample> {
                 cpu_time_ms: cpu,
                 write_bytes: writes,
             })
-        })
-        .collect()
+    }
 }
 
 /// Any capture running from a ClipLite install *other* than `dir` (it would skew numbers).
@@ -113,6 +131,20 @@ mod tests {
         f.flush().unwrap();
         assert!(dir_size(&dir) >= 3 * 1024 * 1024, "stale size for an open file");
         drop(f);
+    }
+
+    #[test]
+    fn tree_includes_root_and_descendants() {
+        let job = crate::job::Job::new_kill_on_close(false).unwrap();
+        // cmd → ping: a grandchild chain rooted at cmd
+        let child = job
+            .spawn(std::process::Command::new("cmd").args(["/c", "ping -n 20 127.0.0.1 >NUL"]))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let s = sample_tree(&[child.id()]);
+        assert!(s.iter().any(|p| p.pid == child.id()), "root missing");
+        assert!(s.iter().any(|p| p.name.eq_ignore_ascii_case("PING.EXE")), "descendant missing: {:?}", s.iter().map(|p| &p.name).collect::<Vec<_>>());
+        assert!(!s.iter().any(|p| p.pid == std::process::id()), "unrelated process included");
     }
 
     #[test]

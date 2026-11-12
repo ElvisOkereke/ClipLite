@@ -58,6 +58,7 @@ impl Drop for Job {
 #[derive(Debug, Clone)]
 pub struct ProcInfo {
     pub pid: u32,
+    pub parent: u32,
     pub name: String,
     pub path: Option<PathBuf>,
 }
@@ -82,7 +83,7 @@ pub fn list_processes() -> Vec<ProcInfo> {
                 }
                 let _ = CloseHandle(h);
             }
-            out.push(ProcInfo { pid: pe.th32ProcessID, name, path });
+            out.push(ProcInfo { pid: pe.th32ProcessID, parent: pe.th32ParentProcessID, name, path });
             ok = Process32NextW(snap, &mut pe).is_ok();
         }
         let _ = CloseHandle(snap);

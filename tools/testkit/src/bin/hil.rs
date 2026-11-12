@@ -215,7 +215,7 @@ mod win {
                 game = launch_game(&job, &fakegame, &game_args)?;
             }
             if t >= next_sample {
-                let samples = procmon::sample(&APP_NAMES, &harness.app_dir);
+                let samples = procmon::sample_tree(&[harness.pid()]);
                 let mut total = 0u64;
                 for p in &samples {
                     writeln!(procs, "{t:.1},{},{},{},{},{},{},{}", p.name, p.pid, p.private_bytes, p.working_set, p.handles, p.cpu_time_ms, p.write_bytes)?;
@@ -371,7 +371,10 @@ mod win {
                         break;
                     }
                     let t = t0.elapsed().as_secs_f64();
-                    let samples = procmon::sample(&APP_NAMES, &app_dir);
+                    let samples = match &harness {
+                        Some(h) => procmon::sample_tree(&[h.pid()]),
+                        None => procmon::sample(&APP_NAMES, &app_dir),
+                    };
                     let mut sum = 0u64;
                     for p in &samples {
                         writeln!(procs, "{t:.1},{},{},{},{},{},{},{}", p.name, p.pid, p.private_bytes, p.working_set, p.handles, p.cpu_time_ms, p.write_bytes)?;
@@ -395,8 +398,8 @@ mod win {
                 let cpu_ms: u64 = cpu.values().map(|(a, b)| b.saturating_sub(*a)).sum();
                 let private_mb = if private_sum.is_empty() { 0.0 } else { private_sum.iter().sum::<u64>() as f64 / private_sum.len() as f64 / 1048576.0 };
                 println!(
-                    "{scenario:<14} run {k}/{runs}: {:.1} fps avg, {:.1} fps 1% low, p99 {:.2} ms | ClipLite CPU {:.1}% RAM {:.0} MB{}",
-                    stats.avg_fps, stats.p1_low_fps, stats.p99_frametime_ms, bench::cpu_pct(cpu_ms, wall, cores), private_mb,
+                    "{scenario:<14} run {k}/{runs}: {:.1} fps avg, {:.1} fps 1% low, p99 {:.2} ms | ClipLite CPU {:.2}% of machine ({:.1}% of one core) RAM {:.0} MB{}",
+                    stats.avg_fps, stats.p1_low_fps, stats.p99_frametime_ms, bench::cpu_pct(cpu_ms, wall, cores), bench::core_pct(cpu_ms, wall), private_mb,
                     note.map(|n| format!(" [{n}]")).unwrap_or_default()
                 );
                 if !capture_alive {
@@ -406,6 +409,7 @@ mod win {
                     "run": k,
                     "stats": stats,
                     "cliplite_cpu_pct": bench::cpu_pct(cpu_ms, wall, cores),
+                    "cliplite_cpu_core_pct": bench::core_pct(cpu_ms, wall),
                     "cliplite_private_mb": private_mb,
                     "capture_alive": capture_alive,
                     "note": note,

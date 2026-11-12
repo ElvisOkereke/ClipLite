@@ -37,6 +37,14 @@ pub fn summarize(frametimes_ms: &[f64]) -> FrameStats {
     }
 }
 
+/// CPU usage as a percentage of one core.
+pub fn core_pct(cpu_time_ms: u64, wall_s: f64) -> f64 {
+    if wall_s <= 0.0 {
+        return 0.0;
+    }
+    cpu_time_ms as f64 / 1000.0 / wall_s * 100.0
+}
+
 /// CPU usage as a percentage of the whole machine.
 pub fn cpu_pct(cpu_time_ms: u64, wall_s: f64, logical_cores: usize) -> f64 {
     if wall_s <= 0.0 || logical_cores == 0 {
@@ -64,6 +72,12 @@ mod tests {
     fn frame_stats_std() {
         let s = summarize(&[10.0, 20.0, 10.0, 20.0]);
         assert!((s.frametime_std_ms - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cpu_percent_of_one_core() {
+        // 1.5 s of CPU over 3 s wall = 50 % of one core
+        assert!((core_pct(1500, 3.0) - 50.0).abs() < 1e-9);
     }
 
     #[test]
