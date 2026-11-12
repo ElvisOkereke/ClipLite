@@ -2,6 +2,7 @@
 //!
 //! - `fakegame`: D3D11 load generator that can hold exclusive fullscreen.
 //! - `harness`/`job`/`input`/`clip`/`matrix`/`elevated`: the `hil` runner.
+pub mod bench;
 pub mod clip;
 #[cfg(windows)]
 pub mod elevated;
@@ -12,6 +13,9 @@ pub mod input;
 #[cfg(windows)]
 pub mod job;
 pub mod matrix;
+#[cfg(windows)]
+pub mod procmon;
+pub mod soak;
 
 #[cfg(windows)]
 pub use harness::DEFAULT_CHORD;

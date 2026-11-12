@@ -15,6 +15,9 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 /// The replay-save chord written into the isolated settings. Chosen so the
 /// owner's own ClipLite (default Ctrl+Shift+F) never reacts to test input.
 pub const DEFAULT_CHORD: &str = "Ctrl+Alt+Shift+F11";
+/// Start / stop recording chords for the bench's record scenario.
+pub const RECORD_START_CHORD: &str = "Ctrl+Alt+Shift+F10";
+pub const RECORD_STOP_CHORD: &str = "Ctrl+Alt+Shift+F9";
 
 /// Executables the harness owns and may kill (never hil/fakegame themselves).
 const APP_PROCS: [&str; 3] = ["cliplite.exe", "cliplite-recorder.exe", "ffmpeg.exe"];
@@ -32,11 +35,12 @@ pub struct Harness {
 /// Settings JSON for the isolated `CLIPLITE_HOME` (partial; serde defaults fill the rest).
 pub fn test_settings(clips: &Path, buffer_secs: u32, chord: &str) -> serde_json::Value {
     serde_json::json!({
-        "hotkeys": { "replay_save": chord },
+        "hotkeys": { "replay_save": chord, "start": RECORD_START_CHORD, "stop": RECORD_STOP_CHORD },
         "replay_buffer_duration_secs": buffer_secs,
         "replay_output_dir": clips,
         "output_dir": clips,
-        "selected_monitor": 0
+        "selected_monitor": 0,
+        "max_replay_buffer_size_mb": 500
     })
 }
 
@@ -295,6 +299,8 @@ mod tests {
         assert_eq!(v["hotkeys"]["replay_save"], "Ctrl+Alt+Shift+F11");
         assert_eq!(v["replay_buffer_duration_secs"], 60);
         assert_eq!(v["replay_output_dir"], r"C:\x y\clips");
+        assert_eq!(v["hotkeys"]["start"], RECORD_START_CHORD);
+        assert_eq!(v["hotkeys"]["stop"], RECORD_STOP_CHORD);
     }
 
     #[test]
