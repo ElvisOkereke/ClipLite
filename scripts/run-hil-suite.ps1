@@ -49,7 +49,8 @@ Start-Transcript -Path (Join-Path $Out "suite.log") -Append | Out-Null
 $results = [ordered]@{}
 function Step([string]$Name, [string[]]$HilArgs) {
     Write-Host "`n=== $Name  ($(Get-Date -Format 'HH:mm:ss')) ===" -ForegroundColor Cyan
-    & $Hil @HilArgs
+    # Windows PowerShell's transcript does not capture native output; echo it.
+    & $Hil @HilArgs 2>&1 | ForEach-Object { Write-Host $_ }
     $results[$Name] = if ($LASTEXITCODE -eq 0) { "ok" } else { "FAILED (exit $LASTEXITCODE)" }
 }
 
