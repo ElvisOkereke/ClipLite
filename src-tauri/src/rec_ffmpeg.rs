@@ -179,3 +179,7 @@ fn add_mic_input(cmd: &mut Vec<String>, device: &str) {
     #[cfg(target_os = "macos")]
     cmd.extend(["-f".into(), "avfoundation".into(), "-i".into(), format!("none:{device}")]);
 }
+
+#[cfg(test)]
+#[path = "rec_ffmpeg_tests.rs"]
+mod tests;

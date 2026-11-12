@@ -1,0 +1,23 @@
+---
+source: src/rec_ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "ddagrab=output_idx=0:framerate=60:draw_mouse=1",
+    "-map",
+    "0:v",
+    "-c:v",
+    "h264_amf",
+    "-pix_fmt",
+    "yuv420p",
+    "-b:v",
+    "8M",
+    "-an",
+    "-movflags",
+    "+faststart",
+    "C:\\out dir\\clip.mp4",
+]

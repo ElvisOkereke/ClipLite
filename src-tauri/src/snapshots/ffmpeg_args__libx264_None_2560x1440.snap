@@ -1,0 +1,33 @@
+---
+source: src/rec_ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "ddagrab=output_idx=0:framerate=60:draw_mouse=1",
+    "-map",
+    "0:v",
+    "-vf",
+    "hwdownload,format=bgra",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-crf",
+    "23",
+    "-preset",
+    "superfast",
+    "-maxrate",
+    "16M",
+    "-bufsize",
+    "32M",
+    "-threads",
+    "0",
+    "-an",
+    "-movflags",
+    "+faststart",
+    "C:\\out dir\\clip.mp4",
+]

@@ -18,6 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "cliplite-recorder"
 path = "src/recorder_bin.rs"
 
+[dev-dependencies]
+insta = "1"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

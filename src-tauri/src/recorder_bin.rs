@@ -552,3 +552,7 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "recorder_bin_ipc_tests.rs"]
+mod ipc_golden;

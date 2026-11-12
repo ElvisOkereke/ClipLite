@@ -300,3 +300,7 @@ fn parse_hotkey_to_vk(s: &str) -> Option<(u32, bool, bool, bool)> {
 
     Some((vk, ctrl, shift, alt))
 }
+
+#[cfg(test)]
+#[path = "hotkey_listener_tests.rs"]
+mod tests;
