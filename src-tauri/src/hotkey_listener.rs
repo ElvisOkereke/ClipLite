@@ -1,10 +1,19 @@
-use global_hotkey::{
-    GlobalHotKeyManager,
-    hotkey::{Code, HotKey, Modifiers},
-};
+/// Global hotkey listener using WH_KEYBOARD_LL (low-level keyboard hook).
+///
+/// WHY NOT RegisterHotKey / global-hotkey crate:
+///   RegisterHotKey is blocked by DirectX fullscreen-exclusive (FSE) games —
+///   the game owns keyboard focus and the OS never delivers WM_HOTKEY to
+///   background windows. This is a known Windows limitation.
+///
+/// WHY WH_KEYBOARD_LL WORKS IN GAMES:
+///   SetWindowsHookEx(WH_KEYBOARD_LL) installs a hook in the kernel's input
+///   pipeline *before* messages are dispatched to any window. It fires even
+///   when a DirectX FSE game has exclusive focus, making it the correct API
+///   for screen-recording hotkeys that must work during gameplay.
+
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
     thread,
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -13,118 +22,33 @@ pub struct HotkeyListener {
     stop_flag: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedHotkey {
+    vk:    u32,   // Virtual-key code
+    ctrl:  bool,
+    shift: bool,
+    alt:   bool,
+    event: String,
+}
+
 impl HotkeyListener {
     pub fn start(app: AppHandle, hotkeys: HashMap<String, String>) -> Self {
-        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag  = Arc::new(AtomicBool::new(false));
         let stop_clone = stop_flag.clone();
 
         thread::spawn(move || {
-            // Manager MUST be created on this thread (Win32 message pump thread)
-            let _manager = match GlobalHotKeyManager::new() {
-                Ok(m) => m,
-                Err(e) => {
-                    log::error!("[hotkeys] Failed to create manager: {e}");
-                    return;
-                }
-            };
-
-            // Build action → event name map
-            let action_events: HashMap<&str, &str> = [
-                ("start",         "hotkey-start-recording"),
-                ("stop",          "hotkey-stop-recording"),
-                ("pause",         "hotkey-pause-recording"),
-                ("library",       "hotkey-open-library"),
-                ("replay_toggle", "hotkey-replay-toggle"),
-                ("replay_save",   "hotkey-replay-save"),
-                ("annotate",      "hotkey-annotate"),
-            ].into_iter().collect();
-
-            // Register hotkeys
-            let mut registered_hotkeys: Vec<(u32, String)> = Vec::new();
-
-            for (action, key_str) in &hotkeys {
-                if key_str.is_empty() { continue; }
-                let Some(&event_name) = action_events.get(action.as_str()) else { continue };
-                match parse_hotkey(key_str) {
-                    Some(hk) => {
-                        let id = hk.id();
-                        if let Err(e) = _manager.register(hk) {
-                            log::error!("[hotkeys] Failed to register {key_str}: {e}");
-                        } else {
-                            registered_hotkeys.push((id, event_name.to_string()));
-                            log::info!("[hotkeys] Registered {key_str} → {event_name}");
-                        }
-                    }
-                    None => log::warn!("[hotkeys] Could not parse hotkey: {key_str}"),
-                }
-            }
-
-            log::info!("[hotkeys] Event loop started, waiting for hotkey presses...");
-            log::info!("[hotkeys] Registered hotkey IDs: {:?}", registered_hotkeys.iter().map(|(id, _)| id).collect::<Vec<_>>());
-
-            // Use Windows message pump with PeekMessage to check for hotkey events
             #[cfg(windows)]
-            {
-                use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, DispatchMessageW, MSG};
-                use windows::Win32::Foundation::HWND;
-
-                unsafe {
-                    let mut msg: MSG = std::mem::zeroed();
-                    
-                    loop {
-                        if stop_clone.load(Ordering::Relaxed) {
-                            log::info!("[hotkeys] Stop flag set, exiting");
-                            break;
-                        }
-
-                        // Use PeekMessageW to avoid blocking completely
-                        let has_msg = PeekMessageW(&mut msg, HWND::default(), 0, 0, windows::Win32::UI::WindowsAndMessaging::PM_REMOVE).as_bool();
-                        
-                        if has_msg {
-                            // Check if it's a WM_HOTKEY message (message id 0x0312)
-                            if msg.message == 0x0312 {
-                                let hotkey_id = msg.wParam.0 as u32;
-                                log::info!("[hotkeys] *** WM_HOTKEY RECEIVED *** id: {}", hotkey_id);
-                                
-                                // Find which hotkey this is
-                                for (id, event_name) in &registered_hotkeys {
-                                    if *id == hotkey_id {
-                                        log::info!("[hotkeys] FIRED: {event_name}");
-                                        // Emit directly to the main webview window so the
-                                        // frontend listen() callbacks are guaranteed to fire.
-                                        if let Some(win) = app.get_webview_window("main") {
-                                            if let Err(e) = win.emit(event_name, ()) {
-                                                log::error!("[hotkeys] emit_to main failed: {e}");
-                                            } else {
-                                                log::info!("[hotkeys] emit_to main OK: {event_name}");
-                                            }
-                                        } else {
-                                            // Window not available (e.g. hidden to tray) — fall back to global
-                                            log::warn!("[hotkeys] main window not found, using global emit");
-                                            let _ = app.emit(event_name, ());
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                            DispatchMessageW(&msg);
-                        } else {
-                            // No message, sleep briefly to avoid busy-waiting
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
-                }
-            }
+            run_hook_thread(app, hotkeys, stop_clone);
 
             #[cfg(not(windows))]
             {
-                loop {
-                    if stop_clone.load(Ordering::Relaxed) { break; }
+                let _ = (app, hotkeys);
+                while !stop_clone.load(Ordering::Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
 
-            log::info!("[hotkeys] Listener stopped");
+            log::info!("[hotkeys] Listener thread exited");
         });
 
         Self { stop_flag }
@@ -136,127 +60,243 @@ impl HotkeyListener {
 
     pub fn stop_and_wait(&self) {
         self.stop_flag.store(true, Ordering::Relaxed);
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
 }
 
-fn parse_hotkey(s: &str) -> Option<HotKey> {
+// ── Windows implementation ─────────────────────────────────────────────────────
+
+#[cfg(windows)]
+fn run_hook_thread(
+    app:       AppHandle,
+    hotkeys:   HashMap<String, String>,
+    stop_flag: Arc<AtomicBool>,
+) {
+    use windows::Win32::{
+        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        UI::WindowsAndMessaging::{
+            CallNextHookEx, GetMessageW, PostThreadMessageW,
+            SetWindowsHookExW, UnhookWindowsHookEx,
+            HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WM_QUIT,
+        },
+        System::Threading::GetCurrentThreadId,
+    };
+
+    // ── Map action names to Tauri event names ─────────────────────────
+    let action_events: HashMap<&str, &str> = [
+        ("start",         "hotkey-start-recording"),
+        ("stop",          "hotkey-stop-recording"),
+        ("pause",         "hotkey-pause-recording"),
+        ("library",       "hotkey-open-library"),
+        ("replay_toggle", "hotkey-replay-toggle"),
+        ("replay_save",   "hotkey-replay-save"),
+    ].into_iter().collect();
+
+    // ── Parse hotkey strings ──────────────────────────────────────────
+    let mut parsed: Vec<ParsedHotkey> = Vec::new();
+    for (action, key_str) in &hotkeys {
+        if key_str.is_empty() { continue; }
+        let Some(&event_name) = action_events.get(action.as_str()) else { continue };
+        match parse_hotkey_to_vk(key_str) {
+            Some((vk, ctrl, shift, alt)) => {
+                log::info!("[hotkeys] OK  {key_str} → {event_name} (vk=0x{vk:02X} C={ctrl} S={shift} A={alt})");
+                parsed.push(ParsedHotkey { vk, ctrl, shift, alt, event: event_name.to_string() });
+            }
+            None => log::warn!("[hotkeys] SKIP {key_str} — could not parse"),
+        }
+    }
+
+    if parsed.is_empty() {
+        log::warn!("[hotkeys] No valid hotkeys configured, hook not installed");
+        return;
+    }
+
+    // ── Store hook data in a process-global static ────────────────────
+    // The LL hook callback is a bare `unsafe extern "system" fn` — it cannot
+    // capture a closure. We share state via a Mutex<Option<>> static.
+    // Safety: only one hook thread runs at a time (enforced by stop_and_wait
+    // before restart), so there is never concurrent mutation.
+    static HOOK_DATA: Mutex<Option<HookData>> = Mutex::new(None);
+
+    struct HookData {
+        hotkeys: Vec<ParsedHotkey>,
+        app:     AppHandle,
+    }
+    // SAFETY: AppHandle is Send+Sync; storing it behind a Mutex is safe.
+    unsafe impl Send for HookData {}
+    unsafe impl Sync for HookData {}
+
+    *HOOK_DATA.lock().unwrap() = Some(HookData { hotkeys: parsed, app });
+
+    // ── The low-level keyboard hook callback ─────────────────────────
+    unsafe extern "system" fn keyboard_hook(
+        code:   i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+        if code >= 0 {
+            let msg_kind = wparam.0 as u32;
+            if msg_kind == WM_KEYDOWN || msg_kind == WM_SYSKEYDOWN {
+                let kb    = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+                let vk    = kb.vkCode;
+                let ctrl  = (GetAsyncKeyState(0x11) as u16) & 0x8000 != 0; // VK_CONTROL
+                let shift = (GetAsyncKeyState(0x10) as u16) & 0x8000 != 0; // VK_SHIFT
+                let alt   = (GetAsyncKeyState(0x12) as u16) & 0x8000 != 0; // VK_MENU
+
+                if let Ok(guard) = HOOK_DATA.try_lock() {
+                    if let Some(data) = guard.as_ref() {
+                        for hk in &data.hotkeys {
+                            if hk.vk == vk
+                                && hk.ctrl  == ctrl
+                                && hk.shift == shift
+                                && hk.alt   == alt
+                            {
+                                log::info!("[hotkeys] FIRED: {}", hk.event);
+                                if let Some(win) = data.app.get_webview_window("main") {
+                                    if let Err(e) = win.emit(&hk.event, ()) {
+                                        log::error!("[hotkeys] emit failed: {e}");
+                                    }
+                                } else {
+                                    let _ = data.app.emit(&hk.event, ());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    }
+
+    // ── Install the hook ──────────────────────────────────────────────
+    let hook = match unsafe {
+        SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), HINSTANCE::default(), 0)
+    } {
+        Ok(h)  => { log::info!("[hotkeys] WH_KEYBOARD_LL installed"); h }
+        Err(e) => { log::error!("[hotkeys] Hook install failed: {e}"); HOOK_DATA.lock().unwrap().take(); return; }
+    };
+
+    // ── Watcher thread posts WM_QUIT when stop_flag is set ────────────
+    let thread_id = unsafe { GetCurrentThreadId() };
+    thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if stop_flag.load(Ordering::Relaxed) {
+                unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).ok(); }
+                break;
+            }
+        }
+    });
+
+    // ── Message loop (must stay on this thread) ───────────────────────
+    // WH_KEYBOARD_LL requires an active message pump on the installing thread.
+    // GetMessageW blocks until a message arrives — WM_QUIT breaks the loop.
+    log::info!("[hotkeys] Message loop running");
+    unsafe {
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+            // No DispatchMessage needed — LL hook callbacks fire directly
+        }
+        UnhookWindowsHookEx(hook).ok();
+    }
+
+    *HOOK_DATA.lock().unwrap() = None;
+    log::info!("[hotkeys] Hook uninstalled");
+}
+
+// ── Parse "CommandOrControl+Shift+R" → (vk, ctrl, shift, alt) ────────────────
+
+fn parse_hotkey_to_vk(s: &str) -> Option<(u32, bool, bool, bool)> {
     let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
-    let key_str = parts.last()?.to_string();
+    let key_str = parts.last()?.trim();
     let mod_parts = &parts[..parts.len() - 1];
 
-    let mut mods = Modifiers::empty();
+    let mut ctrl  = false;
+    let mut shift = false;
+    let mut alt   = false;
+
     for m in mod_parts {
         match m.to_lowercase().as_str() {
-            "ctrl" | "control" | "commandorcontrol" | "cmdorctrl" => mods |= Modifiers::CONTROL,
-            "shift" => mods |= Modifiers::SHIFT,
-            "alt" => mods |= Modifiers::ALT,
-            "meta" | "super" | "command" | "cmd" => mods |= Modifiers::META,
+            "ctrl" | "control" | "commandorcontrol" | "cmdorctrl" => ctrl  = true,
+            "shift"                                               => shift = true,
+            "alt"                                                 => alt   = true,
+            "meta" | "super" | "command" | "cmd"                 => ctrl  = true,
             _ => {}
         }
     }
 
-    // Strip "Key" or "Digit" prefix if present (from web UI key names)
-    let key_normalized = if key_str.starts_with("Key") {
-        &key_str[3..]
-    } else if key_str.starts_with("Digit") {
-        &key_str[5..]
-    } else {
-        &key_str
-    };
+    // Strip web UI key name prefixes
+    let ku = key_str.to_uppercase();
+    let ku = ku.strip_prefix("KEY").unwrap_or(
+             ku.strip_prefix("DIGIT").unwrap_or(&ku));
 
-    let code = match key_normalized.to_uppercase().as_str() {
-        // Letters A-Z
-        "A" => Code::KeyA, "B" => Code::KeyB, "C" => Code::KeyC, "D" => Code::KeyD,
-        "E" => Code::KeyE, "F" => Code::KeyF, "G" => Code::KeyG, "H" => Code::KeyH,
-        "I" => Code::KeyI, "J" => Code::KeyJ, "K" => Code::KeyK, "L" => Code::KeyL,
-        "M" => Code::KeyM, "N" => Code::KeyN, "O" => Code::KeyO, "P" => Code::KeyP,
-        "Q" => Code::KeyQ, "R" => Code::KeyR, "S" => Code::KeyS, "T" => Code::KeyT,
-        "U" => Code::KeyU, "V" => Code::KeyV, "W" => Code::KeyW, "X" => Code::KeyX,
-        "Y" => Code::KeyY, "Z" => Code::KeyZ,
-        
-        // Numbers 0-9
-        "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
-        "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
-        "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8,
-        "9" => Code::Digit9,
-        
+    let vk: u32 = match ku {
+        // Letters — VK codes are the same as ASCII uppercase (0x41–0x5A)
+        "A"=>0x41,"B"=>0x42,"C"=>0x43,"D"=>0x44,"E"=>0x45,"F"=>0x46,
+        "G"=>0x47,"H"=>0x48,"I"=>0x49,"J"=>0x4A,"K"=>0x4B,"L"=>0x4C,
+        "M"=>0x4D,"N"=>0x4E,"O"=>0x4F,"P"=>0x50,"Q"=>0x51,"R"=>0x52,
+        "S"=>0x53,"T"=>0x54,"U"=>0x55,"V"=>0x56,"W"=>0x57,"X"=>0x58,
+        "Y"=>0x59,"Z"=>0x5A,
+        // Digits
+        "0"=>0x30,"1"=>0x31,"2"=>0x32,"3"=>0x33,"4"=>0x34,
+        "5"=>0x35,"6"=>0x36,"7"=>0x37,"8"=>0x38,"9"=>0x39,
         // Function keys
-        "F1"  => Code::F1,  "F2"  => Code::F2,  "F3"  => Code::F3,  "F4"  => Code::F4,
-        "F5"  => Code::F5,  "F6"  => Code::F6,  "F7"  => Code::F7,  "F8"  => Code::F8,
-        "F9"  => Code::F9,  "F10" => Code::F10, "F11" => Code::F11, "F12" => Code::F12,
-        
-        // Special keys
-        "SPACE" | " " => Code::Space,
-        "RETURN" | "ENTER" => Code::Enter,
-        "TAB" => Code::Tab,
-        "ESCAPE" | "ESC" => Code::Escape,
-        "BACKSPACE" => Code::Backspace,
-        "DELETE" | "DEL" => Code::Delete,
-        "INSERT" | "INS" => Code::Insert,
-        "HOME" => Code::Home,
-        "END" => Code::End,
-        "PAGEUP" => Code::PageUp,
-        "PAGEDOWN" => Code::PageDown,
-        
-        // Arrow keys
-        "ARROWLEFT" | "LEFT" => Code::ArrowLeft,
-        "ARROWRIGHT" | "RIGHT" => Code::ArrowRight,
-        "ARROWUP" | "UP" => Code::ArrowUp,
-        "ARROWDOWN" | "DOWN" => Code::ArrowDown,
-        
-        // Numeric keypad
-        "NUMPAD0" | "NUM0" => Code::Numpad0,
-        "NUMPAD1" | "NUM1" => Code::Numpad1,
-        "NUMPAD2" | "NUM2" => Code::Numpad2,
-        "NUMPAD3" | "NUM3" => Code::Numpad3,
-        "NUMPAD4" | "NUM4" => Code::Numpad4,
-        "NUMPAD5" | "NUM5" => Code::Numpad5,
-        "NUMPAD6" | "NUM6" => Code::Numpad6,
-        "NUMPAD7" | "NUM7" => Code::Numpad7,
-        "NUMPAD8" | "NUM8" => Code::Numpad8,
-        "NUMPAD9" | "NUM9" => Code::Numpad9,
-        "NUMPADADD" | "NUMADD" => Code::NumpadAdd,
-        "NUMPADSUBTRACT" | "NUMSUB" => Code::NumpadSubtract,
-        "NUMPADMULTIPLY" | "NUMMUL" => Code::NumpadMultiply,
-        "NUMPADDIVIDE" | "NUMDIV" => Code::NumpadDivide,
-        "NUMPADENTER" | "NUMENTER" => Code::NumpadEnter,
-        "NUMPADDECIMAL" | "NUMDECIMAL" => Code::NumpadDecimal,
-        
-        // Punctuation & symbols
-        "SEMICOLON" | ";" => Code::Semicolon,
-        "COMMA" | "," => Code::Comma,
-        "PERIOD" | "." => Code::Period,
-        "SLASH" | "/" => Code::Slash,
-        "BACKSLASH" | "\\" => Code::Backslash,
-        "QUOTE" | "'" => Code::Quote,
-        "BACKTICK" | "`" => Code::Backquote,
-        "EQUAL" | "=" => Code::Equal,
-        "MINUS" | "-" => Code::Minus,
-        "BRACKETLEFT" | "[" => Code::BracketLeft,
-        "BRACKETRIGHT" | "]" => Code::BracketRight,
-        
-        // Media keys
-        "MEDIAPLAYPAUSE" => Code::MediaPlayPause,
-        "MEDIASTOP" => Code::MediaStop,
-        "MEDIATRACKPREVIOUS" => Code::MediaTrackPrevious,
-        "MEDIATRACKNEXT" => Code::MediaTrackNext,
-        "AUDIOVOLUMEMUTE" => Code::AudioVolumeMute,
-        "AUDIOVOLUMEDOWN" => Code::AudioVolumeDown,
-        "AUDIOVOLUMEUP" => Code::AudioVolumeUp,
-        
-        // Modifier keys
-        "SHIFTLEFT" | "SHIFT" => Code::ShiftLeft,
-        "SHIFTRIGHT" => Code::ShiftRight,
-        "CONTROLLEFT" | "CONTROL" => Code::ControlLeft,
-        "CONTROLRIGHT" => Code::ControlRight,
-        "ALTLEFT" | "ALT" => Code::AltLeft,
-        "ALTRIGHT" => Code::AltRight,
-        "METALEFT" | "META" => Code::MetaLeft,
-        "METARIGHT" => Code::MetaRight,
-        
+        "F1"=>0x70,"F2"=>0x71,"F3"=>0x72,"F4"=>0x73,
+        "F5"=>0x74,"F6"=>0x75,"F7"=>0x76,"F8"=>0x77,
+        "F9"=>0x78,"F10"=>0x79,"F11"=>0x7A,"F12"=>0x7B,
+        // Navigation
+        "SPACE"|" "          =>0x20,
+        "RETURN"|"ENTER"     =>0x0D,
+        "TAB"                =>0x09,
+        "ESCAPE"|"ESC"       =>0x1B,
+        "BACKSPACE"          =>0x08,
+        "DELETE"|"DEL"       =>0x2E,
+        "INSERT"|"INS"       =>0x2D,
+        "HOME"               =>0x24,
+        "END"                =>0x23,
+        "PAGEUP"             =>0x21,
+        "PAGEDOWN"           =>0x22,
+        "ARROWLEFT"|"LEFT"   =>0x25,
+        "ARROWRIGHT"|"RIGHT" =>0x27,
+        "ARROWUP"|"UP"       =>0x26,
+        "ARROWDOWN"|"DOWN"   =>0x28,
+        // Numpad
+        "NUMPAD0"|"NUM0"=>0x60,"NUMPAD1"|"NUM1"=>0x61,
+        "NUMPAD2"|"NUM2"=>0x62,"NUMPAD3"|"NUM3"=>0x63,
+        "NUMPAD4"|"NUM4"=>0x64,"NUMPAD5"|"NUM5"=>0x65,
+        "NUMPAD6"|"NUM6"=>0x66,"NUMPAD7"|"NUM7"=>0x67,
+        "NUMPAD8"|"NUM8"=>0x68,"NUMPAD9"|"NUM9"=>0x69,
+        "NUMPADADD"|"NUMADD"        =>0x6B,
+        "NUMPADSUBTRACT"|"NUMSUB"   =>0x6D,
+        "NUMPADMULTIPLY"|"NUMMUL"   =>0x6A,
+        "NUMPADDIVIDE"|"NUMDIV"     =>0x6F,
+        "NUMPADENTER"|"NUMENTER"    =>0x0D,
+        "NUMPADDECIMAL"|"NUMDECIMAL"=>0x6E,
+        // Punctuation
+        "SEMICOLON"|";"    =>0xBA,
+        "COMMA"|","        =>0xBC,
+        "PERIOD"|"."       =>0xBE,
+        "SLASH"|"/"        =>0xBF,
+        "BACKSLASH"|"\\"   =>0xDC,
+        "QUOTE"|"'"        =>0xDE,
+        "BACKTICK"|"BACKQUOTE"|"`"=>0xC0,
+        "EQUAL"|"="        =>0xBB,
+        "MINUS"|"-"        =>0xBD,
+        "BRACKETLEFT"|"["  =>0xDB,
+        "BRACKETRIGHT"|"]" =>0xDD,
+        // Media
+        "MEDIAPLAYPAUSE"     =>0xB3,
+        "MEDIASTOP"          =>0xB2,
+        "MEDIATRACKPREVIOUS" =>0xB1,
+        "MEDIATRACKNEXT"     =>0xB0,
+        "AUDIOVOLUMEMUTE"    =>0xAD,
+        "AUDIOVOLUMEDOWN"    =>0xAE,
+        "AUDIOVOLUMEUP"      =>0xAF,
         _ => return None,
     };
 
-    Some(HotKey::new(if mods.is_empty() { None } else { Some(mods) }, code))
+    Some((vk, ctrl, shift, alt))
 }

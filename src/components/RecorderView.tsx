@@ -171,7 +171,8 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // Handlers are defined later in the file, so initialize refs with no-ops.
   // They are updated on every render via the useEffect blocks below, so
   // the listener callbacks always invoke the current handler with current state.
-  const handleRecordRef       = useRef<() => void>(() => {});
+  const handleStartRecordRef  = useRef<() => void>(() => {});
+  const handleStopRecordRef   = useRef<() => void>(() => {});
   const handlePauseResumeRef  = useRef<() => void>(() => {});
   const handleReplayToggleRef = useRef<() => void>(() => {});
   const handleSaveReplayRef   = useRef<() => void>(() => {});
@@ -213,20 +214,14 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     return { x: m.x??0, y: m.y??0, width: m.width??1920, height: m.height??1080, monitor: selectedMonitor };
   };
 
+  // handleRecord is the UI button toggle (start if stopped, stop if recording)
   const handleRecord = async () => {
-    if (busy) return;
+    if (isRecording) { await handleStopRecord(); } else { await handleStartRecord(); }
+  };
+
+  const handleStartRecord = async () => {
+    if (busy || isRecording) return;
     setBusy(true);
-    if (isRecording) {
-      setIsRecording(false); setIsPaused(false); setElapsedSecs(0);
-      onStatus("Stopping…");
-      try {
-        const path = await stopRecording();
-        onStatus(path ? `Saved: ${path.split(/[/\\]/).pop()}` : "Stopped.");
-      } catch (e: any) {
-        onStatus(`Stop error: ${e}`);
-      } finally { setBusy(false); }
-      return;
-    }
     onStatus("Starting…");
     try {
       const path = await startRecording(buildRegion(), buildAudioCfg(), buildEncCfg());
@@ -235,6 +230,19 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       onStatus(`Recording → ${path.split(/[/\\]/).pop()}`);
     } catch (e: any) {
       onStatus(`Failed: ${e}`);
+    } finally { setBusy(false); }
+  };
+
+  const handleStopRecord = async () => {
+    if (busy || !isRecording) return;
+    setBusy(true);
+    setIsRecording(false); setIsPaused(false); setElapsedSecs(0);
+    onStatus("Stopping…");
+    try {
+      const path = await stopRecording();
+      onStatus(path ? `Saved: ${path.split(/[/\\]/).pop()}` : "Stopped.");
+    } catch (e: any) {
+      onStatus(`Stop error: ${e}`);
     } finally { setBusy(false); }
   };
 
@@ -294,7 +302,8 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // ── Keep hotkey refs pointing at latest handlers (runs after every render) ─
   // This is a synchronous assignment, not a useEffect, so refs are always
   // current before any event handler could fire.
-  handleRecordRef.current       = handleRecord;
+  handleStartRecordRef.current  = handleStartRecord;
+  handleStopRecordRef.current   = handleStopRecord;
   handlePauseResumeRef.current  = handlePauseResume;
   handleReplayToggleRef.current = handleReplayToggle;
   handleSaveReplayRef.current   = handleSaveReplay;
@@ -311,11 +320,11 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     ] as const;
 
     const handlers: Record<string, () => void> = {
-      "hotkey-start-recording": () => { console.log("[hotkeys] start-recording fired"); handleRecordRef.current(); },
-      "hotkey-stop-recording":  () => { console.log("[hotkeys] stop-recording fired");  handleRecordRef.current(); },
-      "hotkey-pause-recording": () => { console.log("[hotkeys] pause-recording fired"); handlePauseResumeRef.current(); },
-      "hotkey-replay-toggle":   () => { console.log("[hotkeys] replay-toggle fired");   handleReplayToggleRef.current(); },
-      "hotkey-replay-save":     () => { console.log("[hotkeys] replay-save fired");     handleSaveReplayRef.current(); },
+      "hotkey-start-recording": () => handleStartRecordRef.current(),
+      "hotkey-stop-recording":  () => handleStopRecordRef.current(),
+      "hotkey-pause-recording": () => handlePauseResumeRef.current(),
+      "hotkey-replay-toggle":   () => handleReplayToggleRef.current(),
+      "hotkey-replay-save":     () => handleSaveReplayRef.current(),
     };
 
     const promises = events.map(name =>
