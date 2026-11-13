@@ -2,7 +2,7 @@
 
 **A lightweight Windows screen recorder and instant-replay clipper, built with Rust and Tauri. It is becoming a local, AI-assisted highlight engine.**
 
-[![CI](https://github.com/ElvisOkereke/Clips.gg/actions/workflows/ci.yml/badge.svg)](https://github.com/ElvisOkereke/Clips.gg/actions/workflows/ci.yml)
+[![CI](https://github.com/ElvisOkereke/ClipLite/actions/workflows/ci.yml/badge.svg)](https://github.com/ElvisOkereke/ClipLite/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![Rust](https://img.shields.io/badge/Rust-Tauri%20v2-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -11,7 +11,7 @@ ClipLite records your screen and keeps a rolling replay buffer, so you can save 
 
 The project is being rebuilt in public. The roadmap turns it into an **AI highlight engine that runs entirely on your PC**: it finds the moments for you, makes your clip library searchable by what was said and shown, and cuts Shorts automatically. Every step is measured by a hardware-in-the-loop test rig.
 
-> **Status (Nov 2026):** Phase 1 · WS0 (foundation, observability and test kit) is complete and under review in [PR #2](https://github.com/ElvisOkereke/Clips.gg/pull/2). Next: fixing in-game capture and hotkeys. See the [roadmap](docs/ROADMAP.md).
+> **Status (Nov 2026):** Phase 1 · WS0 (foundation, observability and test kit) is complete and under review in [PR #2](https://github.com/ElvisOkereke/ClipLite/pull/2). Next: fixing in-game capture and hotkeys. See the [roadmap](docs/ROADMAP.md).
 
 ---
 

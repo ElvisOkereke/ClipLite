@@ -14,7 +14,7 @@ Design: [`docs/superpowers/specs/2026-11-11-phase1-foundation-design.md`](superp
 
 | Workstream | Goal | Status |
 |---|---|---|
-| **WS0** · Baseline, restructure, observability, test kit | Cargo workspace, a recorder crate that can't link WebView2, characterization tests, JSON logs with correlation ids, the D3D11 fake game, and the `hil` matrix/soak/bench runner. "Before" data is captured. | ✅ [PR #2](https://github.com/ElvisOkereke/Clips.gg/pull/2) · [baseline report](benchmarks/raw/baseline/README.md) |
+| **WS0** · Baseline, restructure, observability, test kit | Cargo workspace, a recorder crate that can't link WebView2, characterization tests, JSON logs with correlation ids, the D3D11 fake game, and the `hil` matrix/soak/bench runner. "Before" data is captured. | ✅ [PR #2](https://github.com/ElvisOkereke/ClipLite/pull/2) · [baseline report](benchmarks/raw/baseline/README.md) |
 | **WS1** · In-game hotkeys | Hotkeys that fire in every display mode, including games running as administrator. Measure `RegisterHotKey` alongside the low-level hook, plus an opt-in elevated mode. Handle actions in Rust, not the UI. | ⏳ |
 | **WS2** · Replay buffer rewrite | A fixed-size ring buffer (bounded RAM and disk) that keeps recording through a save. Capture that survives exclusive fullscreen (supervise and restart on `DXGI_ERROR_ACCESS_LOST`, or switch to Windows Graphics Capture). One shared capture for replay and recording. On by default. | ⏳ |
 | **WS3** · Encoders and compatibility | NVENC / AMF / QSV / x264 with tuned settings. Probe the real pipeline at startup, fall back automatically when an encoder fails to open, explain driver mismatches in plain language, and offer a "copy diagnostics" button. | ⏳ |
