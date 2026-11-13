@@ -1,0 +1,591 @@
+{
+  "build": {
+    "app_path": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-baseline\\src-tauri\\target\\release\\cliplite.exe",
+    "git_sha": "1dd2eee5ad469896b1f6d3df8fe27cd18f5241dc"
+  },
+  "cells": [
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "windowed",
+      "trials": [
+        {
+          "duration_s": 15.52,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135540.mp4",
+          "fullscreen": false,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135549.mp4",
+          "fullscreen": false,
+          "latency_ms": 500,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135558.mp4",
+          "fullscreen": false,
+          "latency_ms": 752,
+          "ok": true
+        },
+        {
+          "duration_s": 8.82,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135608.mp4",
+          "fullscreen": false,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135617.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "windowed",
+      "trials": [
+        {
+          "duration_s": 9.854,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135627.mp4",
+          "fullscreen": false,
+          "latency_ms": 4836,
+          "ok": true
+        },
+        {
+          "duration_s": 11.1995,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135647.mp4",
+          "fullscreen": false,
+          "latency_ms": 1007,
+          "ok": true
+        },
+        {
+          "duration_s": 13.162167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135703.mp4",
+          "fullscreen": false,
+          "latency_ms": 916,
+          "ok": true
+        },
+        {
+          "duration_s": 10.887,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135718.mp4",
+          "fullscreen": false,
+          "latency_ms": 1639,
+          "ok": true
+        },
+        {
+          "duration_s": 15.554,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135736.mp4",
+          "fullscreen": false,
+          "latency_ms": 1629,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "windowed",
+      "trials": [
+        {
+          "duration_s": 19.12,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135800.mp4",
+          "fullscreen": false,
+          "latency_ms": 251,
+          "ok": true
+        },
+        {
+          "duration_s": 8.82,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135809.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135818.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135827.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.82,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135836.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "windowed",
+      "trials": [
+        {
+          "duration_s": 9.287,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135846.mp4",
+          "fullscreen": false,
+          "latency_ms": 1752,
+          "ok": true
+        },
+        {
+          "duration_s": 10.887,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135901.mp4",
+          "fullscreen": false,
+          "latency_ms": 1908,
+          "ok": true
+        },
+        {
+          "duration_s": 11.498167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135916.mp4",
+          "fullscreen": false,
+          "latency_ms": 1309,
+          "ok": true
+        },
+        {
+          "duration_s": 12.4795,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135934.mp4",
+          "fullscreen": false,
+          "latency_ms": 1467,
+          "ok": true
+        },
+        {
+          "duration_s": 11.92,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_135949.mp4",
+          "fullscreen": false,
+          "latency_ms": 2034,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "borderless",
+      "trials": [
+        {
+          "duration_s": 12.010167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140006.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140015.mp4",
+          "fullscreen": false,
+          "latency_ms": 751,
+          "ok": true
+        },
+        {
+          "duration_s": 8.82,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140024.mp4",
+          "fullscreen": false,
+          "latency_ms": 751,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140033.mp4",
+          "fullscreen": false,
+          "latency_ms": 752,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140043.mp4",
+          "fullscreen": false,
+          "latency_ms": 752,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "borderless",
+      "trials": [
+        {
+          "duration_s": 9.32,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140053.mp4",
+          "fullscreen": false,
+          "latency_ms": 1240,
+          "ok": true
+        },
+        {
+          "duration_s": 10.887,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140108.mp4",
+          "fullscreen": false,
+          "latency_ms": 2252,
+          "ok": true
+        },
+        {
+          "duration_s": 11.8395,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140124.mp4",
+          "fullscreen": false,
+          "latency_ms": 2063,
+          "ok": true
+        },
+        {
+          "duration_s": 12.454,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140141.mp4",
+          "fullscreen": false,
+          "latency_ms": 2959,
+          "ok": true
+        },
+        {
+          "duration_s": 11.92,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140200.mp4",
+          "fullscreen": false,
+          "latency_ms": 1388,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "borderless",
+      "trials": [
+        {
+          "duration_s": 14.186167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140218.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140227.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140236.mp4",
+          "fullscreen": false,
+          "latency_ms": 751,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140245.mp4",
+          "fullscreen": false,
+          "latency_ms": 501,
+          "ok": true
+        },
+        {
+          "duration_s": 8.787,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140254.mp4",
+          "fullscreen": false,
+          "latency_ms": 752,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "borderless",
+      "trials": [
+        {
+          "duration_s": 9.32,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140304.mp4",
+          "fullscreen": false,
+          "latency_ms": 1368,
+          "ok": true
+        },
+        {
+          "duration_s": 17.9195,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140328.mp4",
+          "fullscreen": false,
+          "latency_ms": 1233,
+          "ok": true
+        },
+        {
+          "duration_s": 18.6235,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140350.mp4",
+          "fullscreen": false,
+          "latency_ms": 5459,
+          "ok": true
+        },
+        {
+          "duration_s": 14.2715,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140412.mp4",
+          "fullscreen": false,
+          "latency_ms": 1638,
+          "ok": true
+        },
+        {
+          "duration_s": 19.860833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140438.mp4",
+          "fullscreen": false,
+          "latency_ms": 1069,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "duration_s": 13.012833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140453.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.618167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140502.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.490167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140511.mp4",
+          "fullscreen": true,
+          "latency_ms": 251,
+          "ok": true
+        },
+        {
+          "duration_s": 8.4475,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140520.mp4",
+          "fullscreen": true,
+          "latency_ms": 251,
+          "ok": true
+        },
+        {
+          "duration_s": 8.468833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140529.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "duration_s": 9.2155,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140538.mp4",
+          "fullscreen": true,
+          "latency_ms": 12083,
+          "ok": true
+        },
+        {
+          "duration_s": 12.180833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140609.mp4",
+          "fullscreen": true,
+          "latency_ms": 883,
+          "ok": true
+        },
+        {
+          "duration_s": 10.026167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140622.mp4",
+          "fullscreen": true,
+          "latency_ms": 1599,
+          "ok": true
+        },
+        {
+          "duration_s": 10.580833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140638.mp4",
+          "fullscreen": true,
+          "latency_ms": 965,
+          "ok": true
+        },
+        {
+          "duration_s": 10.0475,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140651.mp4",
+          "fullscreen": true,
+          "latency_ms": 1766,
+          "ok": true
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": false,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "duration_s": 12.820833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140712.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.596833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140721.mp4",
+          "fullscreen": true,
+          "latency_ms": 251,
+          "ok": true
+        },
+        {
+          "duration_s": 8.468833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140730.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.468833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140739.mp4",
+          "fullscreen": true,
+          "latency_ms": 250,
+          "ok": true
+        },
+        {
+          "duration_s": 8.468833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140748.mp4",
+          "fullscreen": true,
+          "latency_ms": 251,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": false,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "duration_s": 16.682167,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140805.mp4",
+          "fullscreen": true,
+          "latency_ms": 2189,
+          "ok": true
+        },
+        {
+          "duration_s": 13.1835,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140824.mp4",
+          "fullscreen": true,
+          "latency_ms": 8926,
+          "ok": true
+        },
+        {
+          "duration_s": 16.596833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140854.mp4",
+          "fullscreen": true,
+          "latency_ms": 1858,
+          "ok": true
+        },
+        {
+          "duration_s": 10.6235,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140908.mp4",
+          "fullscreen": true,
+          "latency_ms": 1135,
+          "ok": true
+        },
+        {
+          "duration_s": 10.452833,
+          "failure": null,
+          "file": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\matrix\\home\\clips\\replay_20261112_140921.mp4",
+          "fullscreen": true,
+          "latency_ms": 2109,
+          "ok": true
+        }
+      ],
+      "window": "hidden"
+    }
+  ],
+  "hotkey": "Ctrl+Alt+Shift+F11",
+  "machine": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "AMD Radeon(TM) Graphics; NVIDIA GeForce RTX 3070"
+  },
+  "started_at": "2026-11-12T13:55:23.678730600-05:00",
+  "trials_per_cell": 5
+}

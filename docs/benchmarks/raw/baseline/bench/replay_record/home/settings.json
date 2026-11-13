@@ -1,0 +1,15 @@
+{
+  "hotkeys": {
+    "replay_save": "Ctrl+Alt+Shift+F11",
+    "start": "Ctrl+Alt+Shift+F10",
+    "stop": "Ctrl+Alt+Shift+F9"
+  },
+  "max_replay_buffer_size_mb": 500,
+  "mic_device": "<redacted>",
+  "mic_device_id": "{0.0.1.00000000}.{1985d402-dea7-4158-8ab4-309687463bac}",
+  "output_dir": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\bench\\replay_record\\home\\clips",
+  "replay_buffer_duration_secs": 60,
+  "replay_output_dir": "Y:\\CODING PROJECTS\\LW_Clipper\\cliplite-tauri\\docs\\benchmarks\\raw\\baseline\\bench\\replay_record\\home\\clips",
+  "selected_monitor": 0,
+  "sys_audio_device_id": "{0.0.0.00000000}.{16ebcff4-385e-46d9-a06e-02eb5ada5e98}"
+}

@@ -1,0 +1,12 @@
+[2026-11-12T21:43:55.391Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F11 → hotkey-replay-save (vk=0x7A C=true S=true A=true)
+[2026-11-12T21:43:55.391Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F10 → hotkey-start-recording (vk=0x79 C=true S=true A=true)
+[2026-11-12T21:43:55.391Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F9 → hotkey-stop-recording (vk=0x78 C=true S=true A=true)
+[2026-11-12T21:43:55.391Z INFO  cliplite_lib::hotkey_listener] [hotkeys] WH_KEYBOARD_LL installed
+[2026-11-12T21:43:55.391Z INFO  cliplite_lib::hotkey_listener] [hotkeys] Message loop running
+[2026-11-12T21:43:55.476Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to icon.png.html
+[2026-11-12T21:43:55.476Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to icon.png/index.html
+[2026-11-12T21:43:55.476Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to index.html
+[2026-11-12T21:43:55.773Z INFO  cliplite_lib] Encoder detected: h264_nvenc
+[2026-11-12T21:43:56.668Z INFO  cliplite_lib::test_mode] [test-mode] replay auto-started: replay_started
+[2026-11-12T21:48:06.269Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T21:52:06.179Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save

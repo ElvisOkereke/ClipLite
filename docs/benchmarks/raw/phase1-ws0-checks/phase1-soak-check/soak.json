@@ -1,0 +1,26 @@
+{
+  "build": {
+    "app_path": "target/release/cliplite.exe",
+    "git_sha": "unknown"
+  },
+  "machine": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "AMD Radeon(TM) Graphics; NVIDIA GeForce RTX 3070"
+  },
+  "params": {
+    "cap_mb": 500,
+    "hours": 0.15,
+    "sample_every_secs": 5,
+    "save_every_mins": 4.0,
+    "warmup_mins": 1.0
+  },
+  "started_at": "2026-11-12T16:34:39.401135600-05:00",
+  "verdict": {
+    "band_mb": 6.62890625,
+    "max_temp_dir_mb": 59.0,
+    "pass": false,
+    "saves_ok": 2,
+    "saves_total": 2,
+    "slope_mb_per_hour": 51.85964427428057
+  }
+}

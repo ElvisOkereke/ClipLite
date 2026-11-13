@@ -1,0 +1,70 @@
+[2026-11-12T18:55:24.033Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F10 → hotkey-start-recording (vk=0x79 C=true S=true A=true)
+[2026-11-12T18:55:24.033Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F11 → hotkey-replay-save (vk=0x7A C=true S=true A=true)
+[2026-11-12T18:55:24.033Z INFO  cliplite_lib::hotkey_listener] [hotkeys] OK  Ctrl+Alt+Shift+F9 → hotkey-stop-recording (vk=0x78 C=true S=true A=true)
+[2026-11-12T18:55:24.033Z INFO  cliplite_lib::hotkey_listener] [hotkeys] WH_KEYBOARD_LL installed
+[2026-11-12T18:55:24.033Z INFO  cliplite_lib::hotkey_listener] [hotkeys] Message loop running
+[2026-11-12T18:55:24.124Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to icon.png.html
+[2026-11-12T18:55:24.124Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to icon.png/index.html
+[2026-11-12T18:55:24.124Z DEBUG tauri::manager] Asset `icon.png` not found; fallback to index.html
+[2026-11-12T18:55:24.462Z INFO  cliplite_lib] Encoder detected: h264_nvenc
+[2026-11-12T18:55:25.408Z INFO  cliplite_lib::test_mode] [test-mode] replay auto-started: replay_started
+[2026-11-12T18:55:40.211Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:55:49.320Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:55:58.438Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:56:08.148Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:56:17.113Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:56:27.161Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:56:47.607Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:57:03.034Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:57:18.093Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:57:36.677Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:00.555Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:09.557Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:18.691Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:27.831Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:36.970Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:58:46.618Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:59:01.558Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:59:16.697Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:59:34.861Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T18:59:49.957Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:06.073Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:15.248Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:24.537Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:33.847Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:43.149Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:00:53.164Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:01:08.543Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:01:24.828Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:01:41.448Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:00.435Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:18.365Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:27.486Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:36.529Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:45.887Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:02:54.932Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:03:04.949Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:03:28.790Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:03:50.079Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:04:12.175Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:04:38.243Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:04:53.869Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:05:02.810Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:05:11.635Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:05:20.429Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:05:29.232Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:05:38.709Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:06:09.435Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:06:22.319Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:06:38.835Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:06:51.838Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:07:12.862Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:07:21.793Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:07:30.588Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:07:39.385Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:07:48.190Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:08:05.199Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:08:24.398Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:08:54.814Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:09:08.732Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save
+[2026-11-12T19:09:21.182Z INFO  cliplite_lib::hotkey_listener] [hotkeys] FIRED: hotkey-replay-save

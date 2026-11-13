@@ -1,0 +1,31 @@
+---
+source: src/rec_ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "ddagrab=output_idx=0:framerate=60:draw_mouse=1",
+    "-map",
+    "0:v",
+    "-c:v",
+    "h264_nvenc",
+    "-cq",
+    "23",
+    "-preset",
+    "p2",
+    "-tune",
+    "hq",
+    "-maxrate",
+    "8M",
+    "-bufsize",
+    "16M",
+    "-bf",
+    "2",
+    "-an",
+    "-movflags",
+    "+faststart",
+    "C:\\out dir\\clip.mp4",
+]

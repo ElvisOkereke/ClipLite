@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tauri-build bundles apps/desktop/src-tauri/bin/* (FFmpeg is not in git):
+      # fetch the pinned, checksum-verified build; cache it by the script's hash.
+      - uses: actions/cache@v4
+        with:
+          path: apps/desktop/src-tauri/bin
+          key: ffmpeg-${{ hashFiles('scripts/fetch-ffmpeg.ps1') }}
+
+      - name: Fetch pinned FFmpeg
+        shell: pwsh
+        run: ./scripts/fetch-ffmpeg.ps1
+
+      # tauri::generate_context!() embeds the built frontend, so dist/ must
+      # exist before any Rust compilation of the desktop crate.
+      - name: Frontend build
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Rust build (zero warnings)
+        env:
+          RUSTFLAGS: -Dwarnings
+        run: cargo build --workspace --all-targets
+
+      - name: Rust tests
+        env:
+          RUSTFLAGS: -Dwarnings
+        run: cargo test --workspace

@@ -1,0 +1,251 @@
+{
+  "build": {
+    "app_path": "../cliplite-baseline/src-tauri/target/release/cliplite.exe",
+    "git_sha": "unknown"
+  },
+  "machine": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "AMD Radeon(TM) Graphics; NVIDIA GeForce RTX 3070"
+  },
+  "params": {
+    "duration_secs": 60,
+    "gpu_load": 100,
+    "mode": "borderless",
+    "runs": 5,
+    "warmup_skip_ms": 2000
+  },
+  "scenarios": {
+    "baseline": [
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.0,
+        "cliplite_cpu_pct": 0.0,
+        "cliplite_private_mb": 0.0,
+        "note": null,
+        "run": 1,
+        "stats": {
+          "avg_fps": 81.80685099109631,
+          "frames": 4746,
+          "frametime_std_ms": 0.6478933209460889,
+          "p1_low_fps": 72.06071114914316,
+          "p99_frametime_ms": 13.465
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.0,
+        "cliplite_cpu_pct": 0.0,
+        "cliplite_private_mb": 0.0,
+        "note": null,
+        "run": 2,
+        "stats": {
+          "avg_fps": 80.43497635477168,
+          "frames": 4666,
+          "frametime_std_ms": 0.7321712816764788,
+          "p1_low_fps": 68.73545769771319,
+          "p99_frametime_ms": 13.706
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.0,
+        "cliplite_cpu_pct": 0.0,
+        "cliplite_private_mb": 0.0,
+        "note": null,
+        "run": 3,
+        "stats": {
+          "avg_fps": 80.46488015671422,
+          "frames": 4668,
+          "frametime_std_ms": 0.680735368644049,
+          "p1_low_fps": 70.00131066283795,
+          "p99_frametime_ms": 13.879
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.0,
+        "cliplite_cpu_pct": 0.0,
+        "cliplite_private_mb": 0.0,
+        "note": null,
+        "run": 4,
+        "stats": {
+          "avg_fps": 80.41460356091704,
+          "frames": 4665,
+          "frametime_std_ms": 0.6810160267027023,
+          "p1_low_fps": 70.06454882902761,
+          "p99_frametime_ms": 13.761
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.0,
+        "cliplite_cpu_pct": 0.0,
+        "cliplite_private_mb": 0.0,
+        "note": null,
+        "run": 5,
+        "stats": {
+          "avg_fps": 80.4946723385938,
+          "frames": 4670,
+          "frametime_std_ms": 0.7672337164833245,
+          "p1_low_fps": 68.59351192943332,
+          "p99_frametime_ms": 13.743
+        }
+      }
+    ],
+    "replay": [
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.1901868601349317,
+        "cliplite_cpu_pct": 0.07438667875843323,
+        "cliplite_private_mb": 651.5151615466102,
+        "note": null,
+        "run": 1,
+        "stats": {
+          "avg_fps": 79.07887110809341,
+          "frames": 4588,
+          "frametime_std_ms": 1.1516433766433207,
+          "p1_low_fps": 65.41859367089327,
+          "p99_frametime_ms": 14.947
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.1641974965027284,
+        "cliplite_cpu_pct": 0.07276234353142053,
+        "cliplite_private_mb": 651.1931276483051,
+        "note": null,
+        "run": 2,
+        "stats": {
+          "avg_fps": 78.52611920747523,
+          "frames": 4556,
+          "frametime_std_ms": 1.1670393430448074,
+          "p1_low_fps": 63.84960364664519,
+          "p99_frametime_ms": 15.183
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.8334492608126884,
+        "cliplite_cpu_pct": 0.05209057880079303,
+        "cliplite_private_mb": 652.0697828389831,
+        "note": null,
+        "run": 3,
+        "stats": {
+          "avg_fps": 78.58208404686636,
+          "frames": 4558,
+          "frametime_std_ms": 1.1891503876553482,
+          "p1_low_fps": 63.33915778197284,
+          "p99_frametime_ms": 15.075
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 0.908228608140837,
+        "cliplite_cpu_pct": 0.05676428800880231,
+        "cliplite_private_mb": 654.7375529661017,
+        "note": null,
+        "run": 4,
+        "stats": {
+          "avg_fps": 78.57196234165498,
+          "frames": 4558,
+          "frametime_std_ms": 1.2049231343668336,
+          "p1_low_fps": 62.89204989800549,
+          "p99_frametime_ms": 15.06
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.0410751649550338,
+        "cliplite_cpu_pct": 0.06506719780968961,
+        "cliplite_private_mb": 655.1751191737288,
+        "note": null,
+        "run": 5,
+        "stats": {
+          "avg_fps": 78.56949056011194,
+          "frames": 4558,
+          "frametime_std_ms": 1.1663385490811022,
+          "p1_low_fps": 63.73521620093773,
+          "p99_frametime_ms": 15.116
+        }
+      }
+    ],
+    "replay_record": [
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.348953705571759,
+        "cliplite_cpu_pct": 0.08430960659823494,
+        "cliplite_private_mb": 1205.4271716101696,
+        "note": null,
+        "run": 1,
+        "stats": {
+          "avg_fps": 79.02631309070459,
+          "frames": 4585,
+          "frametime_std_ms": 1.2463688977476095,
+          "p1_low_fps": 62.28428987108504,
+          "p99_frametime_ms": 15.421
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.4493347389190816,
+        "cliplite_cpu_pct": 0.0905834211824426,
+        "cliplite_private_mb": 1205.109970868644,
+        "note": null,
+        "run": 2,
+        "stats": {
+          "avg_fps": 78.95346458663037,
+          "frames": 4580,
+          "frametime_std_ms": 1.254822678369565,
+          "p1_low_fps": 61.820727952510914,
+          "p99_frametime_ms": 15.453
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.8674130922810057,
+        "cliplite_cpu_pct": 0.11671331826756286,
+        "cliplite_private_mb": 1208.1398967161017,
+        "note": null,
+        "run": 3,
+        "stats": {
+          "avg_fps": 78.65844107037324,
+          "frames": 4563,
+          "frametime_std_ms": 1.266472581651362,
+          "p1_low_fps": 61.617430767458494,
+          "p99_frametime_ms": 15.576
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.5274507792517609,
+        "cliplite_cpu_pct": 0.09546567370323505,
+        "cliplite_private_mb": 1211.0258209745762,
+        "note": null,
+        "run": 4,
+        "stats": {
+          "avg_fps": 78.75469199305434,
+          "frames": 4569,
+          "frametime_std_ms": 1.2462841999447665,
+          "p1_low_fps": 62.85741615025655,
+          "p99_frametime_ms": 15.333
+        }
+      },
+      {
+        "capture_alive": true,
+        "cliplite_cpu_core_pct": 1.4491409348122326,
+        "cliplite_cpu_pct": 0.09057130842576454,
+        "cliplite_private_mb": 1211.6240068855932,
+        "note": null,
+        "run": 5,
+        "stats": {
+          "avg_fps": 78.74110622394164,
+          "frames": 4568,
+          "frametime_std_ms": 1.237936437398206,
+          "p1_low_fps": 62.98850322884544,
+          "p99_frametime_ms": 15.324
+        }
+      }
+    ]
+  },
+  "started_at": "2026-11-12T16:17:51.467687-05:00"
+}

@@ -1,0 +1,12 @@
+t_s,ok,failure,latency_ms,duration_s,file
+600.0,false,no_file,,,
+1200.1,false,no_file,,,
+1800.1,false,no_file,,,
+2400.1,false,no_file,,,
+3000.2,false,no_file,,,
+3600.1,false,no_file,,,
+4200.1,false,no_file,,,
+4800.1,false,no_file,,,
+5400.2,false,no_file,,,
+6000.1,false,no_file,,,
+6600.2,false,no_file,,,

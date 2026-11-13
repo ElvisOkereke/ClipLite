@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "bin/*": "bin/",
+      "../../../target/release/cliplite-recorder.exe": "cliplite-recorder.exe"
+    }
+  }
+}
