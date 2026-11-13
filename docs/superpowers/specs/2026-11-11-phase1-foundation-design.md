@@ -29,7 +29,7 @@ Phase 1 decisions should not paint later phases into a corner — in particular,
 
 ## 2. Current state (as of 2026-11-11)
 
-Repo: `cliplite-tauri/` is the git root (remote `github.com/ElvisOkereke/Clips.gg`). Parent folder `LW_Clipper/` is *not* a repo and holds `build_and_test.ps1` (references a missing `test_hotkeys.ps1`) and an empty `test_recordings/`.
+Repo: `cliplite-tauri/` is the git root (remote `github.com/ElvisOkereke/ClipLite`). Parent folder `LW_Clipper/` is *not* a repo and holds `build_and_test.ps1` (references a missing `test_hotkeys.ps1`) and an empty `test_recordings/`.
 
 Current branch `final_updates` (**8 commits ahead of `main`**, including the "separate replay buffer into its own process" refactor, mic auto-select and replay save fixes). `final_updates` + the WIP below is what the owner actually runs. Other branches: `fixing_keybinds`, `global-hotkey`.
 
