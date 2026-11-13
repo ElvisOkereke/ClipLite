@@ -1,0 +1,771 @@
+{
+  "build": {
+    "app_path": "..\\cliplite-baseline\\src-tauri\\target\\release\\cliplite.exe",
+    "git_sha": "unknown"
+  },
+  "cells": [
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "windowed",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "windowed",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "windowed",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "windowed",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "borderless",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "borderless",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "borderless",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "borderless",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": false,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "visible"
+    },
+    {
+      "cpu": "idle",
+      "elevated": true,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    },
+    {
+      "cpu": "saturated",
+      "elevated": true,
+      "mode": "exclusive",
+      "trials": [
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        },
+        {
+          "capture_alive": true,
+          "duration_s": null,
+          "expected_min_s": null,
+          "failure": "no_file",
+          "file": null,
+          "fullscreen": true,
+          "latency_ms": null,
+          "ok": false,
+          "stages": []
+        }
+      ],
+      "window": "hidden"
+    }
+  ],
+  "hotkey": "Ctrl+Alt+Shift+F11",
+  "machine": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "AMD Radeon(TM) Graphics; NVIDIA GeForce RTX 3070"
+  },
+  "started_at": "2026-11-13T02:12:08.021065900-05:00",
+  "trials_per_cell": 5
+}

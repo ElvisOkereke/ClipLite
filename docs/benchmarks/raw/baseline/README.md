@@ -27,7 +27,15 @@ The benchmark was re-run on its own (with the launch-retry fix) after the suite'
 
 Every clip after the first in a cell is only as long as the time since the previous save (8.5–8.8 s). That's because the baseline stops the buffer to save and then restarts it, so older footage is lost.
 
-The **elevated** cells (game running as administrator) still need an owner-approved UAC prompt. Run `hil matrix --elevated`.
+### Hotkey matrix, game elevated: `matrix-elevated/` (12 cells × 5 trials, game run as administrator)
+
+**1/60.** ClipLite stays at normal (medium) integrity. While the focused game runs as administrator, ClipLite's low-level keyboard hook saw a single press in 60 (`FIRED` appears once in `home/debug.log`), in every display mode, windowed included.
+
+The harness side checked out: capture stayed alive for every trial, and exclusive trials did hold fullscreen. The one press that got through saved a clip 38 s later, which is the stderr stall from finding 2, so the trial still recorded `no_file`.
+
+This confirms that UIPI (Windows' isolation between integrity levels) blocks the hook from seeing input meant for an elevated window. It is the other half of the owner's "hotkeys don't work in fullscreen" reports, since many games and launchers run elevated.
+
+Command: `target\release\hil.exe matrix --app ..\cliplite-baseline\src-tauri\target\release\cliplite.exe --trials 5 --elevated --out docs\benchmarks\raw\baseline\matrix-elevated` (one UAC approval by the owner).
 
 ### Benchmark: `bench/` (5 × 60 s per scenario, fake game borderless, GPU-bound)
 
@@ -66,9 +74,10 @@ The harness's own `latency_ms` measures something else: *chord → clip file fir
    - This is the leading explanation for the owner's "doesn't work in fullscreen" reports.
 2. **20 s save stall from an undrained stderr pipe.** The baseline recorder pipes FFmpeg's stderr but never reads it. Once the pipe fills (between 4 and 10 min in these runs), FFmpeg's main thread blocks and never sees `q`. Saving then waits the recorder's 20 s stop timeout, kills FFmpeg, and extracts from an unfinalized MKV. This is fixed in WS0 (stderr is drained into the recorder log).
 3. **Saving stops and restarts the buffer.** Older footage is lost at every save, and there is a capture gap during each restart (the clip lengths above show it).
-4. **Hotkeys are ignored while ClipLite's own window has focus.** The low-level keyboard hook is never invoked then. Debug builds hide this, because DevTools takes focus.
-5. **Mic-only recording writes nothing.** With only a microphone selected (which the UI auto-selects when no audio is configured), FFmpeg can't open `\\.\pipe\cliplite_sysaudio`, and no file or error is shown. Not yet root-caused.
-6. **Recording during replay doubles resources.** There are two captures and two encoders (about 1.2 GB in total).
+4. **Hotkeys don't reach ClipLite while an elevated (administrator) game has focus:** 1/60 in the elevated matrix, because UIPI blocks the low-level hook. WS1 should measure `RegisterHotKey` in parallel with the hook, plus an opt-in elevated mode.
+5. **Hotkeys are ignored while ClipLite's own window has focus.** The low-level keyboard hook is never invoked then. Debug builds hide this, because DevTools takes focus.
+6. **Mic-only recording writes nothing.** With only a microphone selected (which the UI auto-selects when no audio is configured), FFmpeg can't open `\\.\pipe\cliplite_sysaudio`, and no file or error is shown. Not yet root-caused.
+7. **Recording during replay doubles resources.** There are two captures and two encoders (about 1.2 GB in total).
 
 ## Files
 
