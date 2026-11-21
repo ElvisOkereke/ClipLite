@@ -433,3 +433,46 @@ fn stop_engine_finalizes_an_active_recording() {
     let d = valid_av(&rec);
     assert!(d >= 2.0, "recording duration {d}");
 }
+
+#[test]
+fn recording_to_uncreatable_path_fails_at_start() {
+    let mut r = engine("uncreatable");
+    let file = r.out("afile.txt");
+    std::fs::write(&file, b"not a directory").unwrap();
+    let out = file.join("sub").join("out.mp4");
+    let v = r.request(Command::StartRecording { output_path: out.to_string_lossy().into_owned() }, secs(5));
+    expect_event(&v, "error");
+    let s = r.status();
+    assert_eq!(s["engine_running"], true, "{s}");
+    assert_eq!(s["recording"], false, "{s}");
+    // the engine still records to a good path afterwards
+    let good = r.out("good/rec.mp4");
+    let v = r.request(Command::StartRecording { output_path: good.to_string_lossy().into_owned() }, secs(5));
+    expect_event(&v, "recording_started");
+}
+
+#[test]
+fn failed_recording_remux_keeps_segments() {
+    let mut r = engine("remux failure");
+    // MPEG-TS H.264 can't be stream-copied into GIF: FFmpeg creates the file,
+    // then fails writing the header, leaving a partial output behind.
+    let out = r.out("clips/rec.gif");
+    let v = r.request(Command::StartRecording { output_path: out.to_string_lossy().into_owned() }, secs(5));
+    expect_event(&v, "recording_started");
+    sleep(secs(3));
+    let v = r.request(Command::StopRecording, secs(10));
+    expect_event(&v, "error");
+    let msg = v["message"].as_str().unwrap();
+    eprintln!("stop_recording error: {msg}");
+    let (_, kept) = msg.split_once("segments kept at ").unwrap_or_else(|| panic!("no kept path: {msg}"));
+    let kept = PathBuf::from(kept);
+    assert!(kept.starts_with(r.home.join("recovered")), "kept outside app_dir/recovered: {msg}");
+    let ts = std::fs::read_dir(&kept)
+        .unwrap_or_else(|e| panic!("{}: {e}", kept.display()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "ts") && e.metadata().unwrap().len() > 0)
+        .count();
+    assert!(ts >= 1, "no segment files in {}", kept.display());
+    assert!(!out.exists(), "partial output left at {}", out.display());
+    assert_eq!(r.status()["engine_running"], true);
+}

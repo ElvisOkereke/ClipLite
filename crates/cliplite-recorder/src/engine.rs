@@ -151,6 +151,11 @@ impl Engine {
         if rec.is_some() {
             bail!("already recording");
         }
+        // Fail now, not at stop, if the output folder can't exist.
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create output folder {}", parent.display()))?;
+        }
         let dir = self.shared.temp.join(format!("rec-{}", new_cid()));
         *rec = Some(Recording {
             sink: RecordingSink::new(dir, out)?,
@@ -515,6 +520,9 @@ fn save_snapshot(sh: &Shared, snap: &Snapshot, out: &Path, cid: &str) -> Result<
     res
 }
 
+/// Remux a stopped recording. If that fails, the segments are the only copy
+/// of the footage: move them to `app_dir()/recovered/` (the engine temp dir is
+/// wiped at the next start) and name that place in the error.
 fn finish_recording(sh: &Shared, r: Recording, cid: &str) -> Result<String> {
     let dir = r.sink.dir().to_path_buf();
     let res = (|| {
@@ -526,8 +534,35 @@ fn finish_recording(sh: &Shared, r: Recording, cid: &str) -> Result<String> {
         remux(sh, &dir, &names, &out, cid)?;
         Ok(out.to_string_lossy().into_owned())
     })();
-    let _ = std::fs::remove_dir_all(&dir);
-    res
+    let has_segments = std::fs::read_dir(&dir).is_ok_and(|mut it| {
+        it.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "ts")))
+    });
+    match res {
+        Err(e) if has_segments => {
+            let kept = recover_segments(&dir);
+            tracing::error!(stage = Stage::Error.as_str(), cid = %cid, kept = %kept.display(),
+                            "recording remux failed; segments kept");
+            Err(anyhow!("{e:#}; segments kept at {}", kept.display()))
+        }
+        res => {
+            let _ = std::fs::remove_dir_all(&dir);
+            res
+        }
+    }
+}
+
+/// Move a recording's segment dir to `app_dir()/recovered/<name>`; returns
+/// where the segments now are (the original dir if the move failed).
+fn recover_segments(dir: &Path) -> PathBuf {
+    let root = cliplite_core::paths::app_dir().join("recovered");
+    let dest = root.join(dir.file_name().unwrap_or_default());
+    match std::fs::create_dir_all(&root).and_then(|()| std::fs::rename(dir, &dest)) {
+        Ok(()) => dest,
+        Err(e) => {
+            tracing::warn!(error = %e, from = %dir.display(), "could not move segments to recovered/");
+            dir.to_path_buf()
+        }
+    }
 }
 
 /// Concat-remux `dir/<names>` (in order) into `out`, creating its parent dirs.
@@ -551,6 +586,10 @@ fn remux(sh: &Shared, dir: &Path, names: &[String], out: &Path, cid: &str) -> Re
     tracing::info!(stage = Stage::FfmpegExited.as_str(), cid = %cid, pid, purpose = "remux",
                    ok = status.success(), "ffmpeg exited");
     if !status.success() {
+        // FFmpeg leaves a partial (often empty) output behind on failure.
+        if out.is_file() {
+            let _ = std::fs::remove_file(out);
+        }
         bail!("remux failed ({status}): {}", tail.last_messages(3).join(" | "));
     }
     Ok(())
