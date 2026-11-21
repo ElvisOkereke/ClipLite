@@ -260,7 +260,8 @@ pub enum CaptureSource { Gfxcapture, Ddagrab, TestPattern }
 pub enum ExportFormat { Mp4Copy, Webm, Gif }
 
 /// Capture + encode -> MPEG-TS on FFmpeg's stdout (`-f mpegts pipe:1`), GOP = fps
-/// (1 s keyframes), `-mpegts_flags +resend_headers`, audio from `pipe_name`
+/// (1 s keyframes), `-mpegts_flags +resend_headers`, one PES per audio frame
+/// (`-pes_payload_size 0`, keeps keyframe cuts A/V aligned), audio from `pipe_name`
 /// (or a sine tone for `TestPattern`) when `sys_audio_format` is Some.
 /// `TestPattern` is always encoded with libx264 so it runs without a GPU, and
 /// its inputs are read at real time (`-re`).
@@ -329,7 +330,10 @@ pub fn build_engine_command(
         cmd.push("-an".into());
     }
 
+    // One PES per audio frame: the default packs ~0.16 s of AAC per PES, so a
+    // clip cut at a keyframe would start with up to that much earlier audio.
     cmd.extend([
+        "-pes_payload_size".into(), "0".into(),
         "-mpegts_flags".into(), "+resend_headers".into(),
         "-f".into(), "mpegts".into(), "pipe:1".into(),
     ]);

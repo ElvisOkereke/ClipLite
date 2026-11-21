@@ -41,6 +41,8 @@ source: crates/cliplite-core/src/ffmpeg_tests.rs
     "aac",
     "-b:a",
     "128k",
+    "-pes_payload_size",
+    "0",
     "-mpegts_flags",
     "+resend_headers",
     "-f",

@@ -107,6 +107,7 @@ fn engine_cmd_matrix() {
             assert!(cmd.windows(2).any(|w| w[0] == "-g" && w[1] == "30"), "{cmd:?}");
             assert!(cmd.windows(2).any(|w| w[0] == "-keyint_min" && w[1] == "30"), "{cmd:?}");
             assert!(!cmd.iter().any(|a| a.contains("display_border=1")), "{cmd:?}");
+            assert!(cmd.windows(2).any(|w| w[0] == "-pes_payload_size" && w[1] == "0"), "{cmd:?}");
             snap!(format!("engine_cmd__{name}_{an}"), cmd);
         }
     }
