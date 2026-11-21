@@ -82,9 +82,9 @@ All numbers are from the [baseline report](docs/benchmarks/raw/baseline/README.m
 
 | Measurement | Result |
 |---|---|
-| Replay buffer cost to the game | −2.5 % average fps, −8.7 % 1%-low fps, about 650 MB RAM, about 1 % of one CPU core |
+| Replay buffer cost to the game | −2.5 % average fps, −8.6 % 1%-low fps, about 650 MB RAM, about 1 % of one CPU core |
 | Memory over a 2-hour soak | Flat (4.1 MB/h) |
-| Save latency after 10 min of buffering | **21.2 s, now 0.29–0.71 s** (about 28× faster). Root cause: FFmpeg's stderr pipe was never drained, so its main thread blocked and only died at a 20 s timeout |
+| Save latency after 10 min of buffering | **21.2 s, now 0.29–0.71 s** (about 30× faster). Root cause: FFmpeg's stderr pipe was never drained, so its main thread blocked and only died at a 20 s timeout |
 | Hotkeys, normal game | 60/60 trials |
 | Hotkeys, game running as administrator | **1/60.** Windows UIPI blocks a normal-integrity keyboard hook |
 | Exclusive fullscreen | Desktop Duplication can return `DXGI_ERROR_ACCESS_LOST`, which killed capture with no restart |
@@ -160,9 +160,9 @@ Use this section to describe the project accurately. Everything under **Built an
   - Job Object process isolation
 
   Evidence: `tools/testkit/`.
-- **Root-caused and fixed a 21 s save stall**, now under 1 s (about 28× faster), caused by an undrained FFmpeg stderr pipe. Evidence: `docs/benchmarks/raw/baseline/README.md`, `docs/benchmarks/raw/phase1-ws0-checks/`.
+- **Root-caused and fixed a 21 s save stall**, now under 1 s (about 30× faster), caused by an undrained FFmpeg stderr pipe. Evidence: `docs/benchmarks/raw/baseline/README.md`, `docs/benchmarks/raw/phase1-ws0-checks/`.
 - **Diagnosed the "hotkeys/capture fail in fullscreen" reports** as two separate causes, each with evidence: UIPI blocking the keyboard hook for elevated games (1/60 vs 60/60), and `DXGI_ERROR_ACCESS_LOST` ending capture in exclusive fullscreen. These are diagnosed, not yet fixed.
-- **Benchmarked performance cost:** −2.5 % average fps / −8.7 % 1%-low fps, about 650 MB, about 1 % CPU core, flat memory over 2 h.
+- **Benchmarked performance cost:** −2.5 % average fps / −8.6 % 1%-low fps, about 650 MB, about 1 % CPU core, flat memory over 2 h.
 - **Build and release:** CI on Windows with zero warnings, 78 tests, pinned and checksum-verified FFmpeg (including a driver-compatibility analysis), and an installer that bundles the recorder.
 
 **Planned (do not describe as built)**
