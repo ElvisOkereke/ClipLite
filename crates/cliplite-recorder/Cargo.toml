@@ -17,13 +17,17 @@ path = "src/main.rs"
 [dependencies]
 cliplite-core.workspace = true
 anyhow.workspace = true
-dirs.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-which.workspace = true
 tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+# tests/engine_it.rs finds the engine's FFmpeg child by parent pid.
+[target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",

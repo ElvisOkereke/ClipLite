@@ -616,12 +616,9 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "cliplite-core",
- "dirs 5.0.1",
  "embed-resource",
- "serde",
  "serde_json",
  "tracing",
- "which",
  "windows 0.58.0",
 ]
 
