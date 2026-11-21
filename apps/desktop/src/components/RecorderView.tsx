@@ -9,6 +9,7 @@ import type {
   AudioConfig, AudioDevice, EncConfig, MonitorInfo,
   Region, Settings,
 } from "../types";
+import { autoSelectPlan, isGpuAudioDevice } from "../audioSelect";
 import { FPS_OPTIONS, QUALITY_PRESETS as QP } from "../types";
 
 interface Props {
@@ -107,41 +108,24 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   }, [settings.output_dir]);
 
   const loadDevices = () => {
-    listAudioDevices().then(devs => {
-      setMicDevices(devs);
-      // Restore saved mic selection or auto-select first available
-      const savedId = settings.mic_device_id;
-      if (savedId && devs.find(d => d.id === savedId)) {
-        // Restore previously selected mic
-        setMicDeviceId(savedId);
-        setMicDevice(devs.find(d => d.id === savedId)?.name ?? null);
-      } else if (devs.length > 0) {
-        // Auto-select first available microphone to ensure audio is captured
-        const firstMic = devs[0];
-        setMicDeviceId(firstMic.id);
-        setMicDevice(firstMic.name);
-        persist({ mic_device_id: firstMic.id, mic_device: firstMic.name });
+    Promise.all([
+      listAudioDevices().catch(() => [] as AudioDevice[]),
+      listSystemAudioDevices().catch(() => [] as AudioDevice[]),
+    ]).then(([mics, sys]) => {
+      setMicDevices(mics);
+      setSysDevices(sys);
+      const plan = autoSelectPlan(
+        { micId: settings.mic_device_id, sysId: settings.sys_audio_device_id },
+        { mics, sys },
+      );
+      if (plan.selection.micId) {
+        setMicDeviceId(plan.selection.micId);
+        setMicDevice(plan.selection.micName);
       }
-    }).catch(() => {});
-
-    listSystemAudioDevices().then(devs => {
-      setSysDevices(devs);
-      // Restore saved sys audio or pick best non-GPU device
-      const savedId = settings.sys_audio_device_id;
-      if (savedId && devs.find(d => d.id === savedId)) {
-        setSysDeviceId(savedId);
-      } else {
-        const nonGpu = devs.find(d =>
-          !isGpuAudioDevice(d.name) && (d.kind === "output" || d.kind === "loopback")
-        );
-        const any = devs.find(d => d.kind === "output" || d.kind === "loopback");
-        const preferred = nonGpu ?? any;
-        if (preferred) {
-          setSysDeviceId(preferred.id);
-          persist({ sys_audio_device_id: preferred.id });
-        }
-      }
-    }).catch(() => {});
+      if (plan.selection.sysId) setSysDeviceId(plan.selection.sysId);
+      // One persist (and one engine re-apply) for everything auto-selected.
+      if (plan.persist) persist(plan.persist);
+    });
   };
 
   // ── Persist settings when config changes ──────────────────────────────────
@@ -204,12 +188,6 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   }, []);
 
   // ── GPU audio detection ───────────────────────────────────────────────────
-  const isGpuAudioDevice = (name: string) => {
-    const l = name.toLowerCase();
-    return l.includes("nvidia") || l.includes("amd") ||
-           (l.includes("high definition audio") && !l.includes("realtek")) ||
-           l.includes("radeon");
-  };
   const isGpuSelected = sysDeviceId
     ? isGpuAudioDevice(sysDevices.find(d => d.id === sysDeviceId)?.name ?? "")
     : false;
