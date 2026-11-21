@@ -130,6 +130,18 @@ fn test_pattern_always_libx264() {
 }
 
 #[test]
+fn test_pattern_inputs_run_at_real_time() {
+    for audio in [false, true] {
+        let cmd = engine(CaptureSource::TestPattern, audio, 640, 360, "libx264");
+        let inputs = cmd.iter().filter(|a| *a == "-i").count();
+        let paced = cmd.windows(3).filter(|w| w[0] == "-re" && w[1] == "-f" && w[2] == "lavfi").count();
+        assert_eq!(paced, inputs, "{cmd:?}");
+    }
+    let real = engine(CaptureSource::Ddagrab, true, 1920, 1080, "h264_nvenc");
+    assert!(!real.iter().any(|a| a == "-re"), "{real:?}");
+}
+
+#[test]
 fn concat_remux_cmd() {
     snap!("concat_remux_cmd", build_concat_remux_command(
         Path::new(r"C:\ff mpeg\ffmpeg.exe"), Path::new(r"C:\tmp\list.txt"), Path::new(r"C:\out dir\clip.mp4")));

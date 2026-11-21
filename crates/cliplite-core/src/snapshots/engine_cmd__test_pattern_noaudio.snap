@@ -3,6 +3,7 @@ source: crates/cliplite-core/src/ffmpeg_tests.rs
 ---
 [
     "C:\\ff mpeg\\ffmpeg.exe",
+    "-re",
     "-f",
     "lavfi",
     "-i",

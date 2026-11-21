@@ -262,7 +262,8 @@ pub enum ExportFormat { Mp4Copy, Webm, Gif }
 /// Capture + encode -> MPEG-TS on FFmpeg's stdout (`-f mpegts pipe:1`), GOP = fps
 /// (1 s keyframes), `-mpegts_flags +resend_headers`, audio from `pipe_name`
 /// (or a sine tone for `TestPattern`) when `sys_audio_format` is Some.
-/// `TestPattern` is always encoded with libx264 so it runs without a GPU.
+/// `TestPattern` is always encoded with libx264 so it runs without a GPU, and
+/// its inputs are read at real time (`-re`).
 pub fn build_engine_command(
     ffmpeg:           &Path,
     source:           CaptureSource,
@@ -280,7 +281,7 @@ pub fn build_engine_command(
     // Audio input first (index 0), video second, as in the legacy builder.
     if let Some(f) = sys_audio_format {
         if source == CaptureSource::TestPattern {
-            cmd.extend(["-f".into(), "lavfi".into(), "-i".into(), "sine=f=440".into()]);
+            cmd.extend(["-re".into(), "-f".into(), "lavfi".into(), "-i".into(), "sine=f=440".into()]);
         } else {
             cmd.extend([
                 "-f".into(), "f32le".into(),
@@ -300,6 +301,11 @@ pub fn build_engine_command(
         CaptureSource::TestPattern => format!(
             "testsrc2=s={}x{}:r={}", region.width, region.height, fps),
     };
+    // lavfi test sources run as fast as the encoder allows; `-re` paces them
+    // at real time like a capture device (the ring and recordings need that).
+    if source == CaptureSource::TestPattern {
+        cmd.push("-re".into());
+    }
     cmd.extend(["-f".into(), "lavfi".into(), "-i".into(), input]);
 
     let vid = usize::from(has_audio);
