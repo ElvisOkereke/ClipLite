@@ -7,16 +7,38 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
-    Start       { args: StartArgs },
-    Stop,
+    StartEngine    { args: EngineArgs, max_secs: u32, max_mb: u32 },
+    StopEngine,
+    SetLimits      { max_secs: u32, max_mb: u32 },
+    SaveReplay     { secs: u32, output_path: String },
+    StartRecording { output_path: String },
+    StopRecording,
     Pause,
     Resume,
     Status,
+    // legacy: removed in WS2 Task 6
+    Start       { args: StartArgs },
+    // legacy: removed in WS2 Task 6
+    Stop,
+    // legacy: removed in WS2 Task 6
     StartReplay { args: StartArgs },
+    // legacy: removed in WS2 Task 6
     StopReplay,
-    SaveReplay  { secs: u32, output_path: String },
 }
 
+/// Arguments for the single capture+encode engine pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineArgs {
+    pub ffmpeg_path: String,
+    pub source:      crate::ffmpeg::CaptureSource,
+    pub region:      Region,
+    pub audio_cfg:   AudioConfig,
+    pub enc_cfg:     EncConfig,
+    #[serde(default)]
+    pub audio_pipe:  Option<String>,
+}
+
+// legacy: removed in WS2 Task 6
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartArgs {
     pub ffmpeg_path:  String,
@@ -54,13 +76,30 @@ pub struct EncConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
+    EngineStarted,
+    EngineStopped,
+    /// Unsolicited (fresh cid).
+    EngineRestarted { reason: String, restarts: u32 },
+    ReplaySaved {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_s: Option<f64>,
+    },
+    RecordingStarted { path: String },
+    RecordingStopped { path: String },
+    Status {
+        engine_running: bool, recording: bool, paused: bool, elapsed: f64,
+        buffered_secs: f64, buffered_bytes: u64, restarts: u32,
+    },
+    Error { message: String },
+    // legacy: removed in WS2 Task 6
     Started       { path: String },
+    // legacy: removed in WS2 Task 6
     Stopped       { path: String },
+    // legacy: removed in WS2 Task 6
     ReplayStarted { path: String },
+    // legacy: removed in WS2 Task 6
     ReplayStopped,
-    ReplaySaved   { path: String },
-    Status        { is_recording: bool, is_paused: bool, elapsed: f64, replay_active: bool },
-    Error         { message: String },
 }
 
 /// A command or event plus an optional correlation id, serialized flat:

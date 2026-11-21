@@ -1,0 +1,18 @@
+---
+source: crates/cliplite-core/src/ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    "C:\\tmp\\list.txt",
+    "-c",
+    "copy",
+    "-movflags",
+    "+faststart",
+    "C:\\out dir\\clip.mp4",
+]

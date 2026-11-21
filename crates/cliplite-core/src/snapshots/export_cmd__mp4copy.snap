@@ -1,0 +1,16 @@
+---
+source: crates/cliplite-core/src/ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-ss",
+    "1.500",
+    "-to",
+    "12.250",
+    "-i",
+    "C:\\in dir\\clip.mp4",
+    "-c",
+    "copy",
+    "C:\\out dir\\out.bin",
+]

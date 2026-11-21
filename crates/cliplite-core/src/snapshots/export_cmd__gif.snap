@@ -1,0 +1,17 @@
+---
+source: crates/cliplite-core/src/ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-ss",
+    "1.500",
+    "-to",
+    "12.250",
+    "-i",
+    "C:\\in dir\\clip.mp4",
+    "-vf",
+    "fps=15,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse",
+    "-an",
+    "C:\\out dir\\out.bin",
+]

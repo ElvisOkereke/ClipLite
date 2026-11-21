@@ -37,6 +37,11 @@ fn command_name(cmd: &Command) -> &'static str {
         Command::StartReplay { .. } => "start_replay",
         Command::StopReplay => "stop_replay",
         Command::SaveReplay { .. } => "save_replay",
+        Command::StartEngine { .. } => "start_engine",
+        Command::StopEngine => "stop_engine",
+        Command::SetLimits { .. } => "set_limits",
+        Command::StartRecording { .. } => "start_recording",
+        Command::StopRecording => "stop_recording",
     }
 }
 
@@ -290,10 +295,13 @@ fn main() {
                 let s  = state.lock().unwrap().status();
                 let rb = replay_state.lock().unwrap().status();
                 emit(Event::Status {
-                    is_recording:  s.is_recording,
-                    is_paused:     s.is_paused,
-                    elapsed:       s.elapsed_seconds,
-                    replay_active: rb.is_recording,
+                    engine_running: rb.is_recording,
+                    recording:      s.is_recording,
+                    paused:         s.is_paused,
+                    elapsed:        s.elapsed_seconds,
+                    buffered_secs:  0.0,
+                    buffered_bytes: 0,
+                    restarts:       0,
                 }, &cid);
             }
 
@@ -372,6 +380,12 @@ fn main() {
                     }
                     Err(e) => emit(Event::Error { message: e.to_string() }, &cid),
                 }
+            }
+
+            // WS2 engine commands: implemented in Task 5.
+            Command::StartEngine { .. } | Command::StopEngine | Command::SetLimits { .. }
+            | Command::StartRecording { .. } | Command::StopRecording => {
+                emit(Event::Error { message: "engine commands not implemented yet".into() }, &cid);
             }
 
             Command::SaveReplay { secs, output_path } => {
@@ -504,7 +518,7 @@ fn main() {
                     let bytes = std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
                     tracing::info!(stage = Stage::ReplaySaved.as_str(), cid = %cid,
                                    path = %output_path, bytes, "replay saved");
-                    emit(Event::ReplaySaved { path: output_path }, &cid);
+                    emit(Event::ReplaySaved { path: output_path, duration_s: None }, &cid);
                 } else {
                     let msg = if ffmpeg_stderr.is_empty() {
                         "FFmpeg exited with non-zero status".to_string()

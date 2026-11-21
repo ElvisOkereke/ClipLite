@@ -92,6 +92,7 @@ pub fn detect_hw_encoder() -> String {
 // ── Command builder (recorder process) ────────────────────────────────────────
 use crate::ipc::{AudioConfig, EncConfig, Region};
 
+// legacy: removed in WS2 Task 6
 pub fn build_record_command(
     ffmpeg:           &Path,
     region:           &Region,
@@ -103,6 +104,7 @@ pub fn build_record_command(
     build_record_command_with_pipe(ffmpeg, region, audio_cfg, enc_cfg, output_path, sys_audio_format, r"\\.\pipe\cliplite_sysaudio")
 }
 
+// legacy: removed in WS2 Task 6
 pub fn build_record_command_with_pipe(
     ffmpeg:           &Path,
     region:           &Region,
@@ -204,22 +206,7 @@ pub fn build_record_command_with_pipe(
     }
 
     // Video encoder
-    let maxrate = if region.width >= 2560 { "16M" } else { "8M" };
-    let bufsize = if region.width >= 2560 { "32M" } else { "16M" };
-    cmd.extend(["-c:v".into(), enc.into()]);
-    match enc {
-        "h264_nvenc" => cmd.extend([
-            "-cq".into(), crf.to_string(), "-preset".into(), "p2".into(),
-            "-tune".into(), "hq".into(), "-maxrate".into(), maxrate.into(),
-            "-bufsize".into(), bufsize.into(), "-bf".into(), "2".into(),
-        ]),
-        "libx264" => cmd.extend([
-            "-pix_fmt".into(), "yuv420p".into(), "-crf".into(), crf.to_string(),
-            "-preset".into(), "superfast".into(), "-maxrate".into(), maxrate.into(),
-            "-bufsize".into(), bufsize.into(), "-threads".into(), "0".into(),
-        ]),
-        _ => cmd.extend(["-pix_fmt".into(), "yuv420p".into(), "-b:v".into(), maxrate.into()]),
-    }
+    add_video_encoder_args(&mut cmd, enc, crf, region.width);
 
     // Audio encoder + sync correction
     if n_audio > 0 && fmt != "gif" {
@@ -238,6 +225,151 @@ pub fn build_record_command_with_pipe(
 
     if fmt == "mp4" { cmd.extend(["-movflags".into(), "+faststart".into()]); }
     cmd.push(output_path.into());
+    cmd
+}
+
+/// Per-encoder video arguments (`-c:v <enc>` + rate control), shared by the
+/// legacy record builder and the engine builder.
+fn add_video_encoder_args(cmd: &mut Vec<String>, enc: &str, crf: u32, width: i32) {
+    let maxrate = if width >= 2560 { "16M" } else { "8M" };
+    let bufsize = if width >= 2560 { "32M" } else { "16M" };
+    cmd.extend(["-c:v".into(), enc.into()]);
+    match enc {
+        "h264_nvenc" => cmd.extend([
+            "-cq".into(), crf.to_string(), "-preset".into(), "p2".into(),
+            "-tune".into(), "hq".into(), "-maxrate".into(), maxrate.into(),
+            "-bufsize".into(), bufsize.into(), "-bf".into(), "2".into(),
+        ]),
+        "libx264" => cmd.extend([
+            "-pix_fmt".into(), "yuv420p".into(), "-crf".into(), crf.to_string(),
+            "-preset".into(), "superfast".into(), "-maxrate".into(), maxrate.into(),
+            "-bufsize".into(), bufsize.into(), "-threads".into(), "0".into(),
+        ]),
+        _ => cmd.extend(["-pix_fmt".into(), "yuv420p".into(), "-b:v".into(), maxrate.into()]),
+    }
+}
+
+// -- WS2 engine / remux / export builders ------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSource { Gfxcapture, Ddagrab, TestPattern }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat { Mp4Copy, Webm, Gif }
+
+/// Capture + encode -> MPEG-TS on FFmpeg's stdout (`-f mpegts pipe:1`), GOP = fps
+/// (1 s keyframes), `-mpegts_flags +resend_headers`, audio from `pipe_name`
+/// (or a sine tone for `TestPattern`) when `sys_audio_format` is Some.
+/// `TestPattern` is always encoded with libx264 so it runs without a GPU.
+pub fn build_engine_command(
+    ffmpeg:           &Path,
+    source:           CaptureSource,
+    region:           &Region,
+    enc:              &EncConfig,
+    sys_audio_format: Option<&crate::audio::AudioFormat>,
+    pipe_name:        &str,
+) -> Vec<String> {
+    let mut cmd = vec![ffmpeg.to_string_lossy().into_owned()];
+    let fps = enc.fps;
+    let has_audio = sys_audio_format.is_some();
+    let encoder = if source == CaptureSource::TestPattern { "libx264" } else { enc.hw_encoder.as_str() };
+    let needs_dl = encoder == "libx264" && source != CaptureSource::TestPattern;
+
+    // Audio input first (index 0), video second, as in the legacy builder.
+    if let Some(f) = sys_audio_format {
+        if source == CaptureSource::TestPattern {
+            cmd.extend(["-f".into(), "lavfi".into(), "-i".into(), "sine=f=440".into()]);
+        } else {
+            cmd.extend([
+                "-f".into(), "f32le".into(),
+                "-ar".into(), f.sample_rate.to_string(),
+                "-ac".into(), f.channels.to_string(),
+                "-thread_queue_size".into(), "4096".into(),
+                "-i".into(), pipe_name.to_string(),
+            ]);
+        }
+    }
+
+    let input = match source {
+        CaptureSource::Ddagrab => format!(
+            "ddagrab=output_idx={}:framerate={}:draw_mouse=1", region.monitor, fps),
+        CaptureSource::Gfxcapture => format!(
+            "gfxcapture=monitor_idx={}:max_framerate={}:capture_cursor=1", region.monitor, fps),
+        CaptureSource::TestPattern => format!(
+            "testsrc2=s={}x{}:r={}", region.width, region.height, fps),
+    };
+    cmd.extend(["-f".into(), "lavfi".into(), "-i".into(), input]);
+
+    let vid = usize::from(has_audio);
+    cmd.extend(["-map".into(), format!("{vid}:v")]);
+    if needs_dl {
+        cmd.extend(["-vf".into(), "hwdownload,format=bgra".into()]);
+    }
+    if has_audio {
+        cmd.extend(["-map".into(), "0:a".into()]);
+    }
+
+    add_video_encoder_args(&mut cmd, encoder, enc.quality_crf, region.width);
+    cmd.extend(["-g".into(), fps.to_string(), "-keyint_min".into(), fps.to_string()]);
+
+    if has_audio {
+        cmd.extend([
+            "-af".into(), "aresample=async=1000".into(),
+            "-c:a".into(), "aac".into(), "-b:a".into(), "128k".into(),
+        ]);
+    } else {
+        cmd.push("-an".into());
+    }
+
+    cmd.extend([
+        "-mpegts_flags".into(), "+resend_headers".into(),
+        "-f".into(), "mpegts".into(), "pipe:1".into(),
+    ]);
+    cmd
+}
+
+/// `-f concat -safe 0 -i <list> -c copy -movflags +faststart <out>`
+pub fn build_concat_remux_command(ffmpeg: &Path, list_file: &Path, out: &Path) -> Vec<String> {
+    vec![
+        ffmpeg.to_string_lossy().into_owned(), "-y".into(),
+        "-f".into(), "concat".into(), "-safe".into(), "0".into(),
+        "-i".into(), list_file.to_string_lossy().into_owned(),
+        "-c".into(), "copy".into(), "-movflags".into(), "+faststart".into(),
+        out.to_string_lossy().into_owned(),
+    ]
+}
+
+/// Trim/export: Mp4Copy = stream copy; Webm = libvpx-vp9 + libopus;
+/// Gif = fps=15,scale=640:-1 palette (split/palettegen/paletteuse).
+pub fn build_export_command(
+    ffmpeg:  &Path,
+    input:   &Path,
+    start_s: f64,
+    end_s:   f64,
+    fmt:     ExportFormat,
+    out:     &Path,
+) -> Vec<String> {
+    let mut cmd = vec![
+        ffmpeg.to_string_lossy().into_owned(), "-y".into(),
+        "-ss".into(), format!("{start_s:.3}"),
+        "-to".into(), format!("{end_s:.3}"),
+        "-i".into(), input.to_string_lossy().into_owned(),
+    ];
+    match fmt {
+        ExportFormat::Mp4Copy => cmd.extend(["-c".into(), "copy".into()]),
+        ExportFormat::Webm => cmd.extend([
+            "-c:v".into(), "libvpx-vp9".into(), "-b:v".into(), "0".into(), "-crf".into(), "32".into(),
+            "-c:a".into(), "libopus".into(), "-b:a".into(), "128k".into(),
+        ]),
+        ExportFormat::Gif => cmd.extend([
+            "-vf".into(),
+            "fps=15,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse".into(),
+            "-an".into(),
+        ]),
+    }
+    cmd.push(out.to_string_lossy().into_owned());
     cmd
 }
 

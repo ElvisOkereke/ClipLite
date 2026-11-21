@@ -1,0 +1,24 @@
+---
+source: crates/cliplite-core/src/ffmpeg_tests.rs
+---
+[
+    "C:\\ff mpeg\\ffmpeg.exe",
+    "-y",
+    "-ss",
+    "1.500",
+    "-to",
+    "12.250",
+    "-i",
+    "C:\\in dir\\clip.mp4",
+    "-c:v",
+    "libvpx-vp9",
+    "-b:v",
+    "0",
+    "-crf",
+    "32",
+    "-c:a",
+    "libopus",
+    "-b:a",
+    "128k",
+    "C:\\out dir\\out.bin",
+]
