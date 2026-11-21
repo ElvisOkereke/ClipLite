@@ -9,7 +9,7 @@ import type {
   AudioConfig, AudioDevice, EncConfig, MonitorInfo,
   Region, Settings,
 } from "../types";
-import { FPS_OPTIONS, FORMAT_OPTIONS, QUALITY_PRESETS as QP } from "../types";
+import { FPS_OPTIONS, QUALITY_PRESETS as QP } from "../types";
 
 interface Props {
   settings:       Settings;
@@ -35,7 +35,6 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // ── Config — initialised from persisted settings ──────────────────────────
   const [selectedMonitor, setSelectedMonitor] = useState(settings.selected_monitor ?? 0);
   const [fps,         setFps]        = useState(settings.default_fps);
-  const [format,      setFormat]     = useState(settings.default_format);
   const [qualityIdx,  setQualityIdx] = useState(() => {
     const idx = QP.findIndex(p => p.crf === settings.default_quality_crf);
     return idx >= 0 ? idx : 2; // default High
@@ -61,7 +60,6 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       settingsLoadedRef.current = true;
       setSelectedMonitor(settings.selected_monitor ?? 0);
       setFps(settings.default_fps);
-      setFormat(settings.default_format);
       setQualityIdx(() => {
         const idx = QP.findIndex(p => p.crf === settings.default_quality_crf);
         return idx >= 0 ? idx : 2;
@@ -88,6 +86,8 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   const [busy,         setBusy]         = useState(false);
   const [replayActive, setReplayActive] = useState(false);
   const [replayBusy,   setReplayBusy]   = useState(false);
+  const [bufferedSecs, setBufferedSecs] = useState(0);
+  const [restarts,     setRestarts]     = useState(0);
 
   const startedAtRef  = useRef<number>(0);
   const pausedDurRef  = useRef<number>(0);
@@ -96,9 +96,15 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // ── Load devices on mount — no detectHwEncoder here (that spawns FFmpeg) ──
   // hwEncoder is passed from App where it's cached at startup.
   useEffect(() => {
-    loadDevices();
     getMonitors().then(setMonitors).catch(() => {});
   }, []);
+
+  // Device auto-selection persists to Settings (the Rust engine config reads
+  // them), so wait until the real settings have arrived.
+  useEffect(() => {
+    if (settings.output_dir) loadDevices();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.output_dir]);
 
   const loadDevices = () => {
     listAudioDevices().then(devs => {
@@ -114,6 +120,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
         const firstMic = devs[0];
         setMicDeviceId(firstMic.id);
         setMicDevice(firstMic.name);
+        persist({ mic_device_id: firstMic.id, mic_device: firstMic.name });
       }
     }).catch(() => {});
 
@@ -129,7 +136,10 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
         );
         const any = devs.find(d => d.kind === "output" || d.kind === "loopback");
         const preferred = nonGpu ?? any;
-        if (preferred) setSysDeviceId(preferred.id);
+        if (preferred) {
+          setSysDeviceId(preferred.id);
+          persist({ sys_audio_device_id: preferred.id });
+        }
       }
     }).catch(() => {});
   };
@@ -162,10 +172,19 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
         if (s.replay_active !== replayActive) {
           setReplayActive(s.replay_active);
         }
+        setBufferedSecs(s.buffered_secs ?? 0);
+        setRestarts(s.restarts ?? 0);
       } catch { /* ignore */ }
     }, 3000);
     return () => clearInterval(poll);
   }, [isRecording, replayActive]);
+
+  // Capture restarted underneath us (engine crash/respawn) — say so, unobtrusively.
+  useEffect(() => {
+    const p = listen("engine-restarted", () => onStatus("Capture restarted."));
+    return () => { p.then(f => f()); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Global hotkey refs ────────────────────────────────────────────────────
   // Handlers are defined later in the file, so initialize refs with no-ops.
@@ -205,7 +224,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   const buildEncCfg = (): EncConfig => ({
     fps,
     quality_crf: QP[qualityIdx].crf,
-    format,
+    format: "mp4",   // recording is always MP4
     hw_encoder: hwEncoder,
   });
 
@@ -424,11 +443,7 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       <div className="card">
         <div className="card-title">Output</div>
         <div className="form-row">
-          <span className="form-label">Format</span>
-          <select value={format} onChange={e => { setFormat(e.target.value); persist({ default_format: e.target.value }); }} disabled={isRecording}>
-            {FORMAT_OPTIONS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-          </select>
-          <span className="form-label" style={{ marginLeft:12 }}>Quality</span>
+          <span className="form-label">Quality</span>
           <select
             value={qualityIdx}
             onChange={e => { const i=+e.target.value; setQualityIdx(i); persist({ default_quality_crf: QP[i].crf }); }}
@@ -487,6 +502,12 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
         {replayActive && (
           <div style={{ fontSize:10, color:"var(--accent-green)", marginTop:-4, padding:"0 4px" }}>
             ● Replay buffer recording ({REPLAY_OPTIONS[replayIdx].label})
+          </div>
+        )}
+        {replayActive && (
+          <div style={{ fontSize:10, color:"var(--text-muted)", padding:"0 4px" }}>
+            Buffer: {Math.min(Math.round(bufferedSecs), REPLAY_OPTIONS[replayIdx].secs)} s / {REPLAY_OPTIONS[replayIdx].secs} s
+            {restarts > 0 && ` · capture restarted ${restarts}×`}
           </div>
         )}
       </div>

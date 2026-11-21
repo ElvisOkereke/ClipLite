@@ -3,7 +3,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  AudioConfig, AudioDevice, Clip, EncConfig,
+  AudioConfig, AudioDevice, Clip, EncConfig, ExportFormat,
   MonitorInfo, RecordingStatus, Region, Settings,
 } from "./types";
 
@@ -54,9 +54,13 @@ export const applyHotkeys = () => invoke<void>("apply_hotkeys");
 // Utility
 export const getMonitors = () => invoke<MonitorInfo[]>("get_monitors");
 export const openPath = (path: string) => invoke<void>("open_path", { path });
-export const trimClip = (
+export const exportClip = (
   input_path: string,
   output_path: string,
   start_time: number,
   end_time: number,
-) => invoke<void>("trim_clip", { inputPath: input_path, outputPath: output_path, startTime: start_time, endTime: end_time });
+  format: ExportFormat,
+) => invoke<void>("export_clip", { inputPath: input_path, outputPath: output_path, startTime: start_time, endTime: end_time, format });
+
+// Re-apply monitor/audio/fps/quality to the running replay buffer (no-op while recording)
+export const applyCaptureSettings = () => invoke<void>("apply_capture_settings");

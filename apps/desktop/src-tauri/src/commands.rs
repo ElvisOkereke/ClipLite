@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::Command as Process;
 use std::sync::Arc;
 use std::time::Duration;
+use cliplite_core::ffmpeg::{build_export_command, ExportFormat};
 use cliplite_core::ipc::{Command, Event};
 use cliplite_core::telemetry::{new_cid, Stage};
 use serde::{Deserialize, Serialize};
@@ -508,6 +509,39 @@ pub async fn start_replay(
     Ok("replay_started".into())
 }
 
+/// What `apply_capture_settings` does for the current buffer/recording state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyAction { Restart, Defer, Nothing }
+
+pub(crate) fn apply_decision(buffer_on: bool, recording: bool) -> ApplyAction {
+    if recording { ApplyAction::Defer }
+    else if buffer_on { ApplyAction::Restart }
+    else { ApplyAction::Nothing }
+}
+
+/// Re-apply capture settings (monitor, audio, fps, quality) to the engine:
+/// restart it from fresh Settings when only the buffer is running; during a
+/// recording the change applies afterwards.
+#[tauri::command]
+pub async fn apply_capture_settings(app: AppHandle) -> Result<(), String> {
+    let (buffer_on, recording) = {
+        let state = app.state::<RecorderState>();
+        let rec = state.0.lock().unwrap();
+        (rec.buffer_on, rec.recording_path.is_some())
+    };
+    if apply_decision(buffer_on, recording) != ApplyAction::Restart {
+        return Ok(());
+    }
+    let cid = received("apply_capture_settings", None);
+    let client = ensure_client(&app)?;
+    match request_ok(&client, Command::StopEngine, &cid, CONTROL_TIMEOUT).await {
+        Ok(_) => {}
+        Err(e) if e == "engine not running" => {}
+        Err(e) => return Err(e),
+    }
+    ensure_engine(&app, &client, &cid, true).await
+}
+
 /// Stop the buffer. While recording, the engine keeps running for the
 /// recording and the buffer is only marked off (saves are refused).
 #[tauri::command]
@@ -692,15 +726,47 @@ pub fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Map the UI's format string to an export format (error on anything else).
+pub(crate) fn export_args(fmt: &str) -> Result<ExportFormat, String> {
+    match fmt {
+        "mp4"  => Ok(ExportFormat::Mp4Copy),
+        "webm" => Ok(ExportFormat::Webm),
+        "gif"  => Ok(ExportFormat::Gif),
+        other  => Err(format!("unsupported export format: {other:?}")),
+    }
+}
+
+/// Run the export synchronously with the given FFmpeg binary.
+pub(crate) fn run_export(
+    ffmpeg: &std::path::Path, input: &str, output: &str, start: f64, end: f64, format: &str,
+) -> Result<(), String> {
+    let fmt = export_args(format)?;
+    let argv = build_export_command(ffmpeg, std::path::Path::new(input), start, end, fmt, std::path::Path::new(output));
+    let mut cmd = Process::new(&argv[0]);
+    cmd.args(&argv[1..]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("FFmpeg export failed ({s})")),
+        Err(e) => Err(format!("FFmpeg export failed: {e}")),
+    }
+}
+
+/// Trim `[start_time, end_time]` of a clip and export it as MP4 (lossless
+/// stream copy), WebM or GIF.
 #[tauri::command]
-pub fn trim_clip(input_path: String, output_path: String, start_time: f64, end_time: f64) -> Result<(), String> {
+pub async fn export_clip(
+    input_path: String, output_path: String, start_time: f64, end_time: f64, format: String,
+) -> Result<(), String> {
+    export_args(&format)?;
     let ffmpeg = ffmpeg::find_ffmpeg().map_err(|e| e.to_string())?;
-    let ok = Process::new(&ffmpeg)
-        .args(["-y", "-ss", &fmt_time(start_time), "-to", &fmt_time(end_time),
-               "-i", &input_path, "-c", "copy", &output_path])
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().map(|s| s.success()).unwrap_or(false);
-    if ok { Ok(()) } else { Err("FFmpeg trim failed".into()) }
+    tauri::async_runtime::spawn_blocking(move ||
+        run_export(&ffmpeg, &input_path, &output_path, start_time, end_time, &format))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -754,13 +820,6 @@ fn generate_thumb(ffmpeg: &PathBuf, filepath: &str, clip_id: i64) -> anyhow::Res
     Ok(out.to_string_lossy().into())
 }
 
-fn fmt_time(s: f64) -> String {
-    let h = (s / 3600.0) as u64;
-    let m = ((s % 3600.0) / 60.0) as u64;
-    let sec = s % 60.0;
-    format!("{h:02}:{m:02}:{sec:06.3}")
-}
-
 // ── Debug commands ────────────────────────────────────────────────────────────
 
 /// Expose full internal state for debugging.
@@ -800,3 +859,67 @@ pub fn simulate_hotkey(app: AppHandle, action: String) -> Result<(), String> {
 #[cfg(test)]
 #[path = "commands_ipc_tests.rs"]
 mod ipc_tests;
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use cliplite_core::ffmpeg::ExportFormat;
+
+    #[test]
+    fn export_args_maps_ui_strings() {
+        assert_eq!(export_args("mp4"), Ok(ExportFormat::Mp4Copy));
+        assert_eq!(export_args("webm"), Ok(ExportFormat::Webm));
+        assert_eq!(export_args("gif"), Ok(ExportFormat::Gif));
+    }
+
+    #[test]
+    fn export_args_rejects_anything_else() {
+        for bad in ["", "MP4", "mkv", "mov", "gif ", "avi"] {
+            assert!(export_args(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn apply_decision_table() {
+        assert_eq!(apply_decision(true, false), ApplyAction::Restart);
+        assert_eq!(apply_decision(true, true), ApplyAction::Defer);
+        assert_eq!(apply_decision(false, true), ApplyAction::Defer);
+        assert_eq!(apply_decision(false, false), ApplyAction::Nothing);
+    }
+
+    /// Real-FFmpeg check of `export_clip` (WebM + GIF). Skips unless
+    /// `bin/ffmpeg.exe` and `bin/ffprobe.exe` exist next to the crate.
+    #[test]
+    fn run_export_webm_gif_mp4_end_to_end() {
+        let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("bin");
+        let (ff, fp) = (bin.join("ffmpeg.exe"), bin.join("ffprobe.exe"));
+        if !ff.exists() || !fp.exists() { eprintln!("skipped: no bundled ffmpeg/ffprobe"); return; }
+        let dir = std::env::temp_dir().join(format!("cliplite_export_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.mp4");
+        let st = Process::new(&ff).args(["-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-c:a", "aac", "-shortest"])
+            .arg(&src).output().unwrap();
+        assert!(st.status.success(), "source gen failed");
+        let probe = |p: &std::path::Path, entry: &str| -> String {
+            let o = Process::new(&fp).args(["-v", "error", "-select_streams", "v:0", "-show_entries", entry,
+                "-of", "default=nw=1:nk=1"]).arg(p).output().unwrap();
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        let dur = |p: &std::path::Path| -> f64 {
+            let o = Process::new(&fp).args(["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1"])
+                .arg(p).output().unwrap();
+            String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
+        };
+        for (fmt, ext, codec) in [("webm", "webm", "vp9"), ("gif", "gif", "gif"), ("mp4", "mp4", "h264")] {
+            let out = dir.join(format!("out.{ext}"));
+            run_export(&ff, &src.to_string_lossy(), &out.to_string_lossy(), 0.5, 2.5, fmt).unwrap();
+            assert!(out.exists(), "{fmt}: output missing");
+            assert_eq!(probe(&out, "stream=codec_name"), codec, "{fmt}: codec");
+            let d = dur(&out);
+            eprintln!("{fmt}: codec={codec} duration={d:.3}");
+            assert!((d - 2.0).abs() < 0.6, "{fmt}: duration {d}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

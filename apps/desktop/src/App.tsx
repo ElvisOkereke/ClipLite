@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { RecorderView } from "./components/RecorderView";
 import { LibraryView } from "./components/LibraryView";
 import { SettingsView } from "./components/SettingsView";
 
-import { getSettings, saveSettings, applyHotkeys, detectHwEncoder } from "./api";
+import { getSettings, saveSettings, applyHotkeys, detectHwEncoder, applyCaptureSettings } from "./api";
 import type { Settings, View } from "./types";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -35,6 +35,11 @@ const DEFAULT_SETTINGS: Settings = {
   selected_monitor: 0,
   max_replay_buffer_size_mb: 500,
 };
+
+/** Settings that change what the capture engine records. */
+const CAPTURE_KEYS: (keyof Settings)[] = [
+  "selected_monitor", "default_fps", "default_quality_crf", "mic_device_id", "sys_audio_device_id",
+];
 
 /** Floating toast shown briefly when a replay clip is saved. */
 function ReplaySavedToast({ filename, onDone }: { filename: string; onDone: () => void }) {
@@ -103,19 +108,34 @@ export default function App() {
     return () => { unlisteners.forEach(u => u.then(f => f())); };
   }, []);
 
-  // Persist a partial settings change immediately
+  // Persist a partial settings change immediately. Saves (and the engine
+  // re-apply that must follow a capture-setting save) run in order.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   const handleSettingsChange = useCallback(async (partial: Partial<Settings>) => {
-    setSettings(prev => {
-      const next = { ...prev, ...partial };
-      // Fire-and-forget save — errors are silent to avoid interrupting recording
-      saveSettings(next).catch(console.error);
-      return next;
+    const next = { ...settingsRef.current, ...partial };
+    settingsRef.current = next;
+    setSettings(next);
+    const capture = CAPTURE_KEYS.some(k => k in partial);
+    saveChain.current = saveChain.current.then(async () => {
+      try {
+        await saveSettings(next);
+        if (capture) await applyCaptureSettings();
+      } catch (e) {
+        console.error(e);
+        if (capture) setStatus(`Could not apply capture settings: ${e}`);
+      }
     });
   }, []);
 
   const handleSaveSettings = useCallback(async (s: Settings) => {
+    const old = settingsRef.current;
     await saveSettings(s);
     setSettings(s);
+    if (CAPTURE_KEYS.some(k => old[k] !== s[k])) {
+      await applyCaptureSettings().catch(e => setStatus(`Could not apply capture settings: ${e}`));
+    }
     // Re-register hotkeys with the new bindings — only here, not on every
     // incremental save, so rapid RecorderView changes don't spam reregister.
     await applyHotkeys().catch(console.error);

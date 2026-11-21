@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings } from "../types";
-import { FPS_OPTIONS, FORMAT_OPTIONS, QUALITY_PRESETS } from "../types";
+import { FPS_OPTIONS, QUALITY_PRESETS } from "../types";
 
 interface Props {
   settings: Settings;
@@ -136,11 +136,7 @@ export function SettingsView({ settings, onSave }: Props) {
           </div>
 
           <div className="form-row">
-            <span className="form-label">Format</span>
-            <select value={s.default_format} onChange={e => update("default_format", e.target.value)}>
-              {FORMAT_OPTIONS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-            </select>
-            <span className="form-label" style={{ marginLeft: 12 }}>FPS</span>
+            <span className="form-label">FPS</span>
             <select value={s.default_fps} onChange={e => update("default_fps", +e.target.value)}>
               {FPS_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
             </select>
@@ -223,7 +219,7 @@ export function SettingsView({ settings, onSave }: Props) {
            </p>
 
            <div className="form-row" style={{ marginTop: 12 }}>
-             <span className="form-label" title="Maximum size for temporary buffer files. Oldest files are automatically cleaned up when exceeded. Set to 0 for unlimited.">
+             <span className="form-label" title="Maximum size for temporary buffer files. Oldest files are automatically cleaned up when exceeded. 0 uses the default (512 MB); the buffer is always bounded.">
                Max buffer size
              </span>
              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -236,7 +232,7 @@ export function SettingsView({ settings, onSave }: Props) {
                  onChange={e => update("max_replay_buffer_size_mb", Math.max(0, +e.target.value))}
                  style={{ width: 80 }}
                />
-               <span style={{ fontSize: 12, color: "var(--text-muted)" }}>MB (0 = unlimited)</span>
+               <span style={{ fontSize: 12, color: "var(--text-muted)" }}>MB (0 = default, 512 MB)</span>
              </div>
            </div>
          </div>

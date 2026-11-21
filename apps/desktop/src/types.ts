@@ -57,6 +57,8 @@ export interface RecordingStatus {
   elapsed_seconds: number;
   output_path: string | null;
   replay_active: boolean;
+  buffered_secs: number;
+  restarts: number;
 }
 
 export interface Settings {
@@ -78,7 +80,7 @@ export interface Settings {
   replay_output_dir: string;            // empty = same as output_dir
   replay_filename_template: string;     // e.g. "replay_{datetime}"
   selected_monitor: number;             // last-used monitor index (0 = primary)
-  max_replay_buffer_size_mb: number;    // max temp buffer size in MB (0 = unlimited)
+  max_replay_buffer_size_mb: number;    // max temp buffer size in MB (0 = default, 512 MB; always bounded)
 }
 
 export type View = "recorder" | "library" | "settings";
@@ -92,4 +94,11 @@ export const QUALITY_PRESETS = [
 ] as const;
 
 export const FPS_OPTIONS = [15, 24, 30, 60] as const;
-export const FORMAT_OPTIONS = ["mp4", "webm", "gif"] as const;
+
+/** Trim-dialog export formats (recording itself is always MP4). */
+export const EXPORT_FORMATS = [
+  { value: "mp4",  label: "MP4 · lossless", ext: "mp4" },
+  { value: "webm", label: "WebM",           ext: "webm" },
+  { value: "gif",  label: "GIF",            ext: "gif" },
+] as const;
+export type ExportFormat = typeof EXPORT_FORMATS[number]["value"];

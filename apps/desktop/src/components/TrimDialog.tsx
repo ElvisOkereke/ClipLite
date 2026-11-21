@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { trimClip as trimClipApi } from "../api";
-import type { Clip } from "../types";
+import { exportClip } from "../api";
+import type { Clip, ExportFormat } from "../types";
+import { EXPORT_FORMATS } from "../types";
 import { save } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -15,6 +16,7 @@ export function TrimDialog({ clip, onClose, onStatus }: Props) {
   const [inTime, setInTime] = useState(0);
   const [outTime, setOutTime] = useState(dur);
   const [exporting, setExporting] = useState(false);
+  const [format, setFormat] = useState<ExportFormat>("mp4");
 
   const fmt = (s: number) => {
     const h = Math.floor(s / 3600);
@@ -33,24 +35,24 @@ export function TrimDialog({ clip, onClose, onStatus }: Props) {
   };
 
   const handleExport = async () => {
-    const ext = clip.filepath.match(/\.[^.]+$/)?.[0] || ".mp4";
+    const ext = EXPORT_FORMATS.find(f => f.value === format)!.ext;
     const base = clip.filepath.replace(/\.[^.]+$/, "");
-    const defaultPath = `${base}_trimmed${ext}`;
+    const defaultPath = `${base}_trimmed.${ext}`;
 
     const outPath = await save({
       defaultPath,
-      filters: [{ name: "Video", extensions: ["mp4", "webm", "mkv", "mov"] }],
+      filters: [{ name: format.toUpperCase(), extensions: [ext] }],
     });
 
     if (!outPath) return;
 
     setExporting(true);
     try {
-      await trimClipApi(clip.filepath, outPath, inTime, outTime);
+      await exportClip(clip.filepath, outPath, inTime, outTime, format);
       onStatus(`Saved: ${outPath.split(/[/\\]/).pop()}`);
       onClose();
     } catch (e: any) {
-      onStatus(`Trim failed: ${e}`);
+      onStatus(`Export failed: ${e}`);
     } finally {
       setExporting(false);
     }
@@ -121,10 +123,17 @@ export function TrimDialog({ clip, onClose, onStatus }: Props) {
           </div>
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <label className="form-label">Format</label>
+          <select value={format} onChange={e => setFormat(e.target.value as ExportFormat)} disabled={exporting}>
+            {EXPORT_FORMATS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select>
+        </div>
+
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn btn-secondary" onClick={onClose} disabled={exporting}>Cancel</button>
           <button className="btn btn-primary" onClick={handleExport} disabled={exporting}>
-            {exporting ? "Exporting…" : "Export trimmed"}
+            {exporting ? "Exporting…" : "Export"}
           </button>
         </div>
       </div>
