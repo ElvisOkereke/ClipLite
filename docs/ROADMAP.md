@@ -20,7 +20,7 @@ Design: [`docs/superpowers/specs/2026-11-11-phase1-foundation-design.md`](superp
 | **WS3** · Encoders and compatibility | NVENC / AMF / QSV / x264 with tuned settings. Probe the real pipeline at startup, fall back automatically when an encoder fails to open, explain driver mismatches in plain language, and offer a "copy diagnostics" button. | ⏳ |
 | **WS4** · Benchmarks | Before/after charts generated reproducibly from the raw data (frame times, 1% lows, RAM, save latency). | ⏳ |
 | **WS5** · Docs and CI | Decision records, a full architecture refresh, licensing notes, a lint/format/MSRV gate. | 🔄 (README and CI done) |
-| **WS6** · Write-up | Post #1: the test rig, the bugs it found, the 28× faster saves. | ⏳ |
+| **WS6** · Write-up | Post #1: the test rig, the bugs it found, the 30× faster saves. | ⏳ |
 
 **Found by the WS0 test rig and handed to WS1–WS3:**
 1. Capture dies with `DXGI_ERROR_ACCESS_LOST` in exclusive fullscreen, and nothing restarts it.

@@ -42,7 +42,7 @@ Command: `target\release\hil.exe matrix --app ..\cliplite-baseline\src-tauri\tar
 | Scenario | Avg fps | 1% low fps | p99 frame time | ClipLite CPU | ClipLite RAM |
 |---|---|---|---|---|---|
 | ClipLite off | 80.7 ± 0.6 | 69.9 ± 1.4 | 13.7 ± 0.2 ms | n/a | n/a |
-| Replay buffer | 78.7 ± 0.2 (−2.5 %) | 63.8 ± 1.0 (−8.7 %) | 15.1 ± 0.1 ms | 1.0 % of one core | 653 MB |
+| Replay buffer | 78.7 ± 0.2 (−2.5 %) | 63.8 ± 1.0 (−8.6 %) | 15.1 ± 0.1 ms | 1.0 % of one core | 653 MB |
 | Replay + recording | 78.8 ± 0.2 | 62.3 ± 0.6 (−10.9 %) | 15.4 ± 0.1 ms | 1.5 % of one core | 1,208 MB |
 
 ClipLite's numbers cover its whole process tree: the UI, the WebView2 renderers, the recorder(s) and FFmpeg. Recording on top of the replay buffer starts a **second, independent capture and encoder**, which roughly doubles the RAM.
