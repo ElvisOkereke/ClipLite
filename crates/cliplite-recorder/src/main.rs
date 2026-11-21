@@ -41,10 +41,6 @@ fn command_name(cmd: &Command) -> &'static str {
         Command::Pause => "pause",
         Command::Resume => "resume",
         Command::Status => "status",
-        Command::Start { .. } => "start",
-        Command::Stop => "stop",
-        Command::StartReplay { .. } => "start_replay",
-        Command::StopReplay => "stop_replay",
     }
 }
 
@@ -81,9 +77,6 @@ fn dispatch(engine: &mut Option<Engine>, cmd: Command, cid: &str, emit_fn: &Emit
             }
         }
         Command::Status => reply(engine.as_ref().map(Engine::status).unwrap_or_else(idle_status)),
-        Command::Start { .. } | Command::Stop | Command::StartReplay { .. } | Command::StopReplay => {
-            reply(error("legacy command not supported by this recorder; update ClipLite"))
-        }
         cmd => {
             let Some(e) = engine.as_ref() else { return reply(error("engine not running")) };
             match cmd {

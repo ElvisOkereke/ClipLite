@@ -50,14 +50,47 @@ pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Update tray icon and menu item label to reflect recording state.
-pub fn set_recording_state<R: Runtime>(app: &tauri::AppHandle<R>, is_recording: bool) {
+/// What the tray tooltip shows: recording and replay-buffer state.
+static TRAY_STATE: std::sync::Mutex<(bool, Option<u32>)> = std::sync::Mutex::new((false, None));
+
+fn refresh<R: Runtime>(app: &tauri::AppHandle<R>, update: impl FnOnce(&mut (bool, Option<u32>))) {
+    let text = {
+        let mut st = TRAY_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        update(&mut st);
+        tooltip(st.0, st.1)
+    };
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let tooltip = if is_recording {
-            "ClipLite — Recording…"
-        } else {
-            "ClipLite"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
+        let _ = tray.set_tooltip(Some(&text));
+    }
+}
+
+/// Update the tray tooltip to reflect recording state.
+pub fn set_recording_state<R: Runtime>(app: &tauri::AppHandle<R>, is_recording: bool) {
+    refresh(app, |st| st.0 = is_recording);
+}
+
+/// Update the tray tooltip to reflect the replay buffer (`None` = off).
+pub fn set_replay_state<R: Runtime>(app: &tauri::AppHandle<R>, buffer_secs: Option<u32>) {
+    refresh(app, |st| st.1 = buffer_secs);
+}
+
+/// Tooltip text for the tray state (`None` buffer = off).
+pub fn tooltip(recording: bool, buffer_secs: Option<u32>) -> String {
+    let head = if recording { "ClipLite — Recording…" } else { "ClipLite" };
+    match buffer_secs {
+        Some(n) => format!("{head}\nReplay buffer: on ({n} s)"),
+        None => format!("{head}\nReplay buffer: off"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tooltip_shows_buffer_and_recording() {
+        assert_eq!(tooltip(false, Some(60)), "ClipLite\nReplay buffer: on (60 s)");
+        assert_eq!(tooltip(false, None), "ClipLite\nReplay buffer: off");
+        assert_eq!(tooltip(true, Some(120)), "ClipLite — Recording…\nReplay buffer: on (120 s)");
     }
 }

@@ -126,14 +126,6 @@ pub struct SysAudioCapture {
 
 #[cfg(windows)]
 impl SysAudioCapture {
-    pub fn start(sys_device_id: Option<String>, mic_device_id: Option<String>) -> Result<Option<Self>> {
-        Self::start_with_pipe(sys_device_id, mic_device_id, r"\\.\pipe\cliplite_sysaudio".into())
-    }
-
-    pub fn start_replay(sys_device_id: Option<String>, mic_device_id: Option<String>) -> Result<Option<Self>> {
-        Self::start_with_pipe(sys_device_id, mic_device_id, r"\\.\pipe\cliplite_sysaudio_replay".into())
-    }
-
     /// Returns Ok(Some(capture)) if audio started successfully, Ok(None) if the audio
     /// devices failed to open (caller should then build an audio-free FFmpeg command).
     pub fn start_with_pipe(sys_device_id: Option<String>, mic_device_id: Option<String>, pipe_name: String) -> Result<Option<Self>> {

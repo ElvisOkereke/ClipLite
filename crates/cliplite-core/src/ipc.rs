@@ -16,14 +16,6 @@ pub enum Command {
     Pause,
     Resume,
     Status,
-    // legacy: removed in WS2 Task 6
-    Start       { args: StartArgs },
-    // legacy: removed in WS2 Task 6
-    Stop,
-    // legacy: removed in WS2 Task 6
-    StartReplay { args: StartArgs },
-    // legacy: removed in WS2 Task 6
-    StopReplay,
 }
 
 /// Arguments for the single capture+encode engine pipeline.
@@ -36,24 +28,6 @@ pub struct EngineArgs {
     pub enc_cfg:     EncConfig,
     #[serde(default)]
     pub audio_pipe:  Option<String>,
-}
-
-// legacy: removed in WS2 Task 6
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartArgs {
-    pub ffmpeg_path:  String,
-    pub output_path:  String,
-    pub region:       Region,
-    pub audio_cfg:    AudioConfig,
-    pub enc_cfg:      EncConfig,
-    /// Named pipe for audio. Recording uses cliplite_sysaudio, replay uses cliplite_sysaudio_replay.
-    /// If absent, defaults to cliplite_sysaudio.
-    #[serde(default)]
-    pub audio_pipe:   Option<String>,
-    /// Max size in MB for temporary replay buffer files (0 = unlimited).
-    /// When exceeded, oldest temp files are automatically cleaned up.
-    #[serde(default)]
-    pub max_replay_buffer_size_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,18 +66,10 @@ pub enum Event {
         buffered_secs: f64, buffered_bytes: u64, restarts: u32,
     },
     Error { message: String },
-    // legacy: removed in WS2 Task 6
-    Started       { path: String },
-    // legacy: removed in WS2 Task 6
-    Stopped       { path: String },
-    // legacy: removed in WS2 Task 6
-    ReplayStarted { path: String },
-    // legacy: removed in WS2 Task 6
-    ReplayStopped,
 }
 
 /// A command or event plus an optional correlation id, serialized flat:
-/// `{"cmd":"stop","cid":"abc"}` / `{"event":"stopped","path":"…","cid":"abc"}`.
+/// `{"cmd":"stop_recording","cid":"abc"}` / `{"event":"recording_stopped","path":"…","cid":"abc"}`.
 /// A missing `cid` deserializes to `None`, so pre-telemetry JSON still parses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope<T> {

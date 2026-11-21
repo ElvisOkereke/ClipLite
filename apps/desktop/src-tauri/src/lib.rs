@@ -1,3 +1,4 @@
+mod capture_config;
 mod commands;
 use cliplite_core::{audio, ffmpeg};
 mod recorder;
@@ -79,7 +80,8 @@ pub fn run() {
             );
             *app.state::<HotkeyListenerHandle>().0.lock().unwrap() = Some(listener);
 
-            // Detect hardware encoder once at startup
+            // Detect the hardware encoder once at startup, then turn the
+            // replay buffer on if Settings has it on (test mode uses the same path).
             let app_handle = app.handle().clone();
             let hw_pref   = settings.hw_encoder.clone();
             std::thread::spawn(move || {
@@ -90,9 +92,8 @@ pub fn run() {
                 };
                 log::info!("Encoder detected: {encoder}");
                 *app_handle.state::<EncoderCache>().inner().0.lock().unwrap() = encoder;
+                commands::start_buffer_at_launch(&app_handle);
             });
-
-            test_mode::maybe_autostart(app.handle());
 
             if let Some(win) = app.get_webview_window("main") {
                 win.show().ok();

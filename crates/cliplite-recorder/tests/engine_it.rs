@@ -395,13 +395,8 @@ fn start_failure_reports_error_and_engine_stays_off() {
 }
 
 #[test]
-fn legacy_and_engineless_commands_are_rejected() {
+fn engineless_commands_are_rejected() {
     let mut r = Rec::spawn("rejected");
-    for cmd in [Command::Stop, Command::StopReplay] {
-        let v = r.request(cmd, secs(5));
-        expect_event(&v, "error");
-        assert_eq!(v["message"], "legacy command not supported by this recorder; update ClipLite");
-    }
     let rec = r.out("rec.mp4").to_string_lossy().into_owned();
     for cmd in [
         Command::StopEngine,
