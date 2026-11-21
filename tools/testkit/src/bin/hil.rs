@@ -3,6 +3,7 @@
 //!   hil matrix   --app <cliplite.exe> [--trials 5] [--elevated] --out <dir>
 //!   hil soak     --app <cliplite.exe> [--hours 2] [--save-every-mins 10] --out <dir>
 //!   hil bench    --app <cliplite.exe> [--runs 5] [--duration-secs 60] --out <dir>
+//!   hil capture-spike --source <ddagrab|gfxcapture> [--trials 10] [--gpu-load 100] --out <dir>
 //!   hil self-test [--ffmpeg-dir <dir>]
 //!   hil elevated-helper --pipe <name>        (launched by `matrix --elevated`)
 use anyhow::Result;
@@ -67,6 +68,17 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Does a capture source survive a game entering exclusive fullscreen? (takes over the screen)
+    CaptureSpike {
+        #[arg(long, value_parser = ["ddagrab", "gfxcapture"])]
+        source: String,
+        #[arg(long, default_value_t = 10)]
+        trials: usize,
+        #[arg(long, default_value_t = 100)]
+        gpu_load: u8,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Check the clip validator against generated black / test-pattern clips.
     SelfTest {
         #[arg(long)]
@@ -124,6 +136,7 @@ mod win {
                 soak(&app, hours, save_every_mins, sample_every_secs, warmup_mins, &out)
             }
             Cmd::Bench { app, runs, duration_secs, mode, gpu_load, out } => bench(&app, runs, duration_secs, &mode, gpu_load, &out),
+            Cmd::CaptureSpike { source, trials, gpu_load, out } => capture_spike(&source, trials, gpu_load, &out),
             Cmd::SelfTest { ffmpeg_dir } => {
                 let dir = match ffmpeg_dir {
                     Some(d) => d,
@@ -135,6 +148,31 @@ mod win {
             }
             Cmd::ElevatedHelper { pipe, client_pid } => serve(&pipe, &sibling_exe("fakegame.exe")?, client_pid),
         }
+    }
+
+    fn capture_spike(source: &str, trials: usize, gpu_load: u8, out: &Path) -> Result<()> {
+        use cliplite_testkit::harness::prepare_out;
+        use cliplite_testkit::spike::{run_trial, trial_passed, SpikeReport};
+        let foreign = procmon::foreign_capture();
+        if !foreign.is_empty() {
+            anyhow::bail!("a ClipLite capture is already running, close it first (not killing it): {}", foreign.join("; "));
+        }
+        let ffmpeg = default_ffmpeg_dir()?.join("ffmpeg.exe");
+        let fakegame = sibling_exe("fakegame.exe")?;
+        prepare_out(out)?;
+        let job = Job::new_kill_on_close(false)?;
+        let mut report = SpikeReport { source: source.to_string(), trials: Vec::new() };
+        for i in 1..=trials {
+            let t = run_trial(&job, &ffmpeg, &fakegame, source, gpu_load)?;
+            let ok = trial_passed(t.alive_at_end, t.frames, t.expected_frames);
+            println!("trial {i}/{trials}: {} (alive={} frames={}/{})", if ok { "PASS" } else { "FAIL" }, t.alive_at_end, t.frames, t.expected_frames);
+            report.trials.push(t);
+            std::fs::write(out.join("spike.json"), serde_json::to_string_pretty(&report)?)?;
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        let passed = report.trials.iter().filter(|t| trial_passed(t.alive_at_end, t.frames, t.expected_frames)).count();
+        println!("{source}: {passed}/{trials} trials passed");
+        Ok(())
     }
 
     fn default_ffmpeg_dir() -> Result<PathBuf> {

@@ -16,6 +16,7 @@ pub mod matrix;
 #[cfg(windows)]
 pub mod procmon;
 pub mod soak;
+pub mod spike;
 
 #[cfg(windows)]
 pub use harness::DEFAULT_CHORD;
