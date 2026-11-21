@@ -52,14 +52,38 @@ fn route_line_matches_cid_else_unsolicited() {
     assert_eq!(seen.len(), 3, "unparseable lines are logged, not routed: {seen:?}");
 }
 
-/// The recorder binary next to this test's target dir (`target/<profile>/`).
+/// First ancestor directory of `start` that contains `name`.
+fn find_in_ancestors(start: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    start.ancestors().skip(1).map(|dir| dir.join(name)).find(|p| p.is_file())
+}
+
+#[test]
+fn find_in_ancestors_walks_up_to_the_binary() {
+    let root = std::env::temp_dir().join(format!("cliplite find exe {}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let deep = root.join("a").join("b").join("c");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(deep.join("test.exe"), b"x").unwrap();
+    assert_eq!(find_in_ancestors(&deep.join("test.exe"), "cliplite-recorder.exe"), None);
+    std::fs::write(root.join("a").join("cliplite-recorder.exe"), b"x").unwrap();
+    assert_eq!(find_in_ancestors(&deep.join("test.exe"), "cliplite-recorder.exe"),
+               Some(root.join("a").join("cliplite-recorder.exe")));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The recorder binary: the nearest ancestor of this test executable that
+/// holds it (`target/<profile>/` for `deps/` and `build/<pkg>/<hash>/` alike),
+/// else `<workspace>/target/{debug,release}`.
 #[cfg(windows)]
 fn recorder_exe() -> std::path::PathBuf {
+    const NAME: &str = "cliplite-recorder.exe";
     let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().and_then(|deps| deps.parent()).unwrap();
-    let p = profile_dir.join("cliplite-recorder.exe");
-    assert!(p.exists(), "{} missing: run `cargo build -p cliplite-recorder` (cargo test --workspace builds it)", p.display());
-    p
+    let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target");
+    find_in_ancestors(&exe, NAME)
+        .or_else(|| ["debug", "release"].iter().map(|p| target.join(p).join(NAME)).find(|p| p.exists()))
+        .unwrap_or_else(|| panic!(
+            "{NAME} missing (searched above {} and {}/{{debug,release}}): run `cargo build -p cliplite-recorder` \
+             (cargo test --workspace builds it)", exe.display(), target.display()))
 }
 
 #[cfg(windows)]
