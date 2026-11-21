@@ -37,7 +37,8 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Hil = Join-Path $RepoRoot "target\release\hil.exe"
 Write-Host "Building the test kit (release)..."
-Push-Location $RepoRoot; cargo build --release -p cliplite-testkit; Pop-Location
+Push-Location $RepoRoot; cargo build --release -p cliplite-testkit; $buildExit = $LASTEXITCODE; Pop-Location
+if ($buildExit -ne 0) { throw "Test kit build failed (cargo exit $buildExit); refusing to run the suite with a stale hil.exe." }
 if (-not (Test-Path -LiteralPath $Hil)) { throw "Test kit build failed: $Hil not found" }
 if (-not (Test-Path -LiteralPath $App)) { throw "App not found: $App" }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
