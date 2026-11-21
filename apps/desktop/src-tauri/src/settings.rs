@@ -31,11 +31,14 @@ pub struct Settings {
     pub replay_output_dir: String,          // empty = same as output_dir
     pub replay_filename_template: String,   // e.g. "replay_{datetime}"
     pub selected_monitor: u32,              // last-used monitor index (0 = primary)
-    pub max_replay_buffer_size_mb: u32,     // replay ring memory cap in MB (0 = no byte cap; the duration governs)
+    pub max_replay_buffer_size_mb: u32,     // replay ring memory cap in MB (always bounded: 0 = DEFAULT_REPLAY_CAP_MB)
 }
 
 /// Current settings schema. v2 = in-memory replay engine (WS2).
 pub const SETTINGS_VERSION: u32 = 2;
+
+/// Default replay ring memory cap; also replaces a cap of 0 (the ring is never unbounded).
+pub const DEFAULT_REPLAY_CAP_MB: u32 = 512;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -73,7 +76,7 @@ impl Default for Settings {
             replay_output_dir: String::new(),   // empty = same as output_dir
             replay_filename_template: "replay_{datetime}".to_string(),
             selected_monitor: 0,
-            max_replay_buffer_size_mb: 512,
+            max_replay_buffer_size_mb: DEFAULT_REPLAY_CAP_MB,
         }
     }
 }
@@ -83,7 +86,7 @@ pub use cliplite_core::paths::app_dir;
 impl Settings {
     /// Upgrade an older settings file in place; true if anything changed.
     /// v1 -> v2: buffer on by default (0 -> 60 s), recordings are MP4 only,
-    /// the old 500 MB default cap becomes 512 MB.
+    /// the old 500 MB default cap and 0 ("unlimited") become 512 MB.
     pub fn migrate(&mut self) -> bool {
         if self.settings_version >= SETTINGS_VERSION {
             return false;
@@ -94,8 +97,8 @@ impl Settings {
         if matches!(self.default_format.as_str(), "webm" | "gif") {
             self.default_format = "mp4".to_string();
         }
-        if self.max_replay_buffer_size_mb == 500 {
-            self.max_replay_buffer_size_mb = 512;
+        if matches!(self.max_replay_buffer_size_mb, 0 | 500) {
+            self.max_replay_buffer_size_mb = DEFAULT_REPLAY_CAP_MB;
         }
         self.settings_version = SETTINGS_VERSION;
         true
@@ -215,6 +218,13 @@ mod tests {
         let mut w = v1(30, "webm", 100);
         assert!(w.migrate());
         assert_eq!((w.replay_buffer_duration_secs, w.default_format.as_str(), w.max_replay_buffer_size_mb), (30, "mp4", 100));
+    }
+
+    #[test]
+    fn migrate_maps_zero_cap_to_default() {
+        let mut s = v1(120, "mp4", 0);
+        assert!(s.migrate());
+        assert_eq!((s.max_replay_buffer_size_mb, s.replay_buffer_duration_secs, s.settings_version), (512, 120, 2));
     }
 
     #[test]

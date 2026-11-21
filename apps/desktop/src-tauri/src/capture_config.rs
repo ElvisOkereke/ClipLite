@@ -6,7 +6,7 @@ use cliplite_core::ffmpeg::CaptureSource;
 use cliplite_core::ipc::{AudioConfig, EncConfig, EngineArgs, Region};
 
 use crate::commands::MonitorInfo;
-use crate::settings::Settings;
+use crate::settings::{Settings, DEFAULT_REPLAY_CAP_MB};
 
 /// Capture source until ADR 0001 decides (provisional: ddagrab, known-good).
 pub const DEFAULT_CAPTURE_SOURCE: CaptureSource = CaptureSource::Ddagrab;
@@ -58,10 +58,11 @@ pub fn engine_args(s: &Settings, monitors: &[MonitorInfo], ffmpeg: &Path, encode
 }
 
 /// Ring limits for the engine: `(duration + 2 s headroom, memory cap MB)`.
-/// A cap of 0 (v1 "unlimited") means no byte cap: the duration governs.
+/// The ring is always bounded: a cap of 0 (v1 "unlimited", or a 0 typed in
+/// the UI) means the default cap.
 pub fn ring_limits(s: &Settings) -> (u32, u32) {
     let max_mb = match s.max_replay_buffer_size_mb {
-        0 => u32::MAX,
+        0 => DEFAULT_REPLAY_CAP_MB,
         mb => mb,
     };
     (s.replay_buffer_duration_secs.saturating_add(2), max_mb)
@@ -133,11 +134,11 @@ mod tests {
     }
 
     #[test]
-    fn ring_limits_zero_cap_means_no_byte_cap() {
+    fn ring_limits_zero_cap_is_default_cap() {
         let mut s = Settings::default();
-        s.replay_buffer_duration_secs = 120;
+        s.replay_buffer_duration_secs = 60;
         s.max_replay_buffer_size_mb = 0;
-        assert_eq!(ring_limits(&s), (122, u32::MAX));
+        assert_eq!(ring_limits(&s), (62, 512), "memory stays bounded");
     }
 
     #[test]
