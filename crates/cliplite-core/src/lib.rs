@@ -7,3 +7,4 @@ pub mod ffmpeg;
 pub mod ipc;
 pub mod paths;
 pub mod telemetry;
+pub mod ts;
