@@ -164,13 +164,13 @@ mod win {
         let mut report = SpikeReport { source: source.to_string(), trials: Vec::new() };
         for i in 1..=trials {
             let t = run_trial(&job, &ffmpeg, &fakegame, source, gpu_load)?;
-            let ok = trial_passed(t.alive_at_end, t.frames, t.expected_frames);
-            println!("trial {i}/{trials}: {} (alive={} frames={}/{})", if ok { "PASS" } else { "FAIL" }, t.alive_at_end, t.frames, t.expected_frames);
+            let ok = trial_passed(t.game_launched, t.game_fullscreen, t.alive_at_end, t.frames, t.expected_frames);
+            println!("trial {i}/{trials}: {} (game={}/fs={} alive={} frames={}/{})", if ok { "PASS" } else { "FAIL" }, t.game_launched, t.game_fullscreen, t.alive_at_end, t.frames, t.expected_frames);
             report.trials.push(t);
             std::fs::write(out.join("spike.json"), serde_json::to_string_pretty(&report)?)?;
             std::thread::sleep(Duration::from_secs(2));
         }
-        let passed = report.trials.iter().filter(|t| trial_passed(t.alive_at_end, t.frames, t.expected_frames)).count();
+        let passed = report.trials.iter().filter(|t| trial_passed(t.game_launched, t.game_fullscreen, t.alive_at_end, t.frames, t.expected_frames)).count();
         println!("{source}: {passed}/{trials} trials passed");
         Ok(())
     }

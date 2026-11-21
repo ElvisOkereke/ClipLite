@@ -10,6 +10,8 @@ pub const EXPECTED_FRAMES: u64 = TRIAL_SECS * FPS as u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Trial {
+    pub game_launched: bool,
+    pub game_fullscreen: bool,
     pub alive_at_end: bool,
     pub exit_code: Option<i32>,
     pub frames: u64,
@@ -28,9 +30,10 @@ pub fn last_progress_frame(text: &str) -> Option<u64> {
     text.lines().rev().find_map(|l| l.trim().strip_prefix("frame=").and_then(|v| v.trim().parse().ok()))
 }
 
-/// Pass = still alive at the end AND at least 90% of the expected frames.
-pub fn trial_passed(alive_at_end: bool, frames: u64, expected_frames: u64) -> bool {
-    alive_at_end && frames * 10 >= expected_frames * 9
+/// Pass = the game launched AND went fullscreen, FFmpeg still alive at the
+/// end, AND at least 90% of the expected frames.
+pub fn trial_passed(game_launched: bool, game_fullscreen: bool, alive_at_end: bool, frames: u64, expected_frames: u64) -> bool {
+    game_launched && game_fullscreen && alive_at_end && frames * 10 >= expected_frames * 9
 }
 
 /// The lavfi source string for `-f lavfi -i`.
@@ -99,6 +102,10 @@ mod runner {
         std::thread::sleep(Duration::from_secs(GAME_START_SECS));
         let args: Vec<String> = ["--mode", "exclusive", "--gpu-load", &gpu_load.to_string()].iter().map(|s| s.to_string()).collect();
         let game = launch_game(job, fakegame, &args);
+        let (game_launched, game_fullscreen, launch_err) = match &game {
+            Ok(g) => (true, g.fullscreen, None),
+            Err(e) => (false, false, Some(format!("{e:#}"))),
+        };
         let end = Duration::from_secs(TRIAL_SECS);
         while t0.elapsed() < end {
             if child.try_wait()?.is_some() {
@@ -118,8 +125,15 @@ mod runner {
         if let Ok(g) = game {
             g.close();
         }
-        let text = log.lock().unwrap().clone();
+        let mut text = log.lock().unwrap().clone();
+        if let Some(e) = launch_err {
+            text.push_str(&format!("
+fake game launch failed: {e}
+"));
+        }
         Ok(Trial {
+            game_launched,
+            game_fullscreen,
             alive_at_end,
             exit_code,
             frames: last_progress_frame(&text).unwrap_or(0),
@@ -140,9 +154,11 @@ mod tests {
     }
     #[test]
     fn trial_verdict() {
-        assert!(trial_passed(true, 440, 450));
-        assert!(!trial_passed(true, 300, 450)); // starved
-        assert!(!trial_passed(false, 450, 450)); // died
+        assert!(trial_passed(true, true, true, 440, 450));
+        assert!(!trial_passed(true, true, true, 300, 450)); // starved
+        assert!(!trial_passed(true, true, false, 450, 450)); // died
+        assert!(!trial_passed(false, false, true, 450, 450)); // game never launched
+        assert!(!trial_passed(true, false, true, 450, 450)); // launched, not fullscreen
     }
     #[test]
     fn source_filter_strings() {
