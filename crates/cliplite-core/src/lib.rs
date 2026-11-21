@@ -6,5 +6,6 @@ pub mod audio;
 pub mod ffmpeg;
 pub mod ipc;
 pub mod paths;
+pub mod ring;
 pub mod telemetry;
 pub mod ts;
