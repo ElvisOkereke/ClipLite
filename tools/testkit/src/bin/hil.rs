@@ -33,6 +33,9 @@ enum Cmd {
         /// Replay buffer length; the UI only accepts 60/120/180/300.
         #[arg(long, default_value_t = 60)]
         buffer_secs: u32,
+        /// Fake-game GPU load percent (0..=100).
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u8).range(0..=100))]
+        gpu_load: u8,
         #[arg(long)]
         out: PathBuf,
     },
@@ -124,14 +127,14 @@ mod win {
     use std::time::Instant;
     use cliplite_testkit::job::Job;
     use cliplite_testkit::matrix::{
-        apply_context, cells, evaluate_trial, read_json_logs, stages_for_trial, summary_markdown, CpuLoad, TrialResult,
+        apply_context, cells, matrix_game_args, evaluate_trial, read_json_logs, stages_for_trial, summary_markdown, CpuLoad, TrialResult,
     };
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     pub fn run(cmd: Cmd) -> Result<()> {
         match cmd {
-            Cmd::Matrix { app, trials, elevated, hotkey, buffer_secs, out } => matrix(&app, trials, elevated, &hotkey, buffer_secs, &out),
+            Cmd::Matrix { app, trials, elevated, hotkey, buffer_secs, gpu_load, out } => matrix(&app, trials, elevated, &hotkey, buffer_secs, gpu_load, &out),
             Cmd::Soak { app, hours, save_every_mins, sample_every_secs, warmup_mins, out } => {
                 soak(&app, hours, save_every_mins, sample_every_secs, warmup_mins, &out)
             }
@@ -500,7 +503,7 @@ mod win {
         Ok(())
     }
 
-    fn matrix(app: &Path, trials: usize, elevated: bool, chord: &str, buffer_secs: u32, out: &Path) -> Result<()> {
+    fn matrix(app: &Path, trials: usize, elevated: bool, chord: &str, buffer_secs: u32, gpu_load: u8, out: &Path) -> Result<()> {
         cliplite_testkit::harness::prepare_out(out)?;
         let fakegame = sibling_exe("fakegame.exe")?;
         let started_at = chrono::Local::now().to_rfc3339();
@@ -525,10 +528,7 @@ mod win {
                     CpuLoad::Idle => 0,
                     CpuLoad::Saturated => threads,
                 };
-                let args: Vec<String> = ["--mode", cell.mode, "--gpu-load", "50", "--cpu-threads", &cpu.to_string()]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
+                let args = matrix_game_args(cell.mode, gpu_load, cpu);
 
                 let game_ready = Instant::now();
                 let (running, fullscreen, focused) = match helper.as_mut() {
@@ -599,6 +599,7 @@ mod win {
             "started_at": started_at,
             "hotkey": chord,
             "trials_per_cell": trials,
+            "gpu_load": gpu_load,
             "cells": cells,
         });
         std::fs::write(out.join("matrix.json"), serde_json::to_vec_pretty(&report)?)?;

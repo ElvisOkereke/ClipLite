@@ -186,9 +186,25 @@ pub fn summary_markdown(cells: &[Cell]) -> String {
     s
 }
 
+/// Fake-game arguments for one matrix cell.
+pub fn matrix_game_args(mode: &str, gpu_load: u8, cpu_threads: usize) -> Vec<String> {
+    ["--mode", mode, "--gpu-load", &gpu_load.to_string(), "--cpu-threads", &cpu_threads.to_string()]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matrix_game_args_thread_gpu_load_and_cpu_threads() {
+        assert_eq!(
+            matrix_game_args("borderless", 100, 16),
+            ["--mode", "borderless", "--gpu-load", "100", "--cpu-threads", "16"]
+        );
+    }
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)

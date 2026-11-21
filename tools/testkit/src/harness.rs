@@ -60,6 +60,7 @@ impl TestAudio {
 /// Settings JSON for the isolated `CLIPLITE_HOME` (partial; serde defaults fill the rest).
 pub fn test_settings(clips: &Path, buffer_secs: u32, chord: &str, audio: &TestAudio) -> serde_json::Value {
     serde_json::json!({
+        "settings_version": 2,
         "sys_audio_device_id": audio.sys_id,
         "mic_device_id": audio.mic_id,
         "mic_device": audio.mic_name,
@@ -448,6 +449,13 @@ pub fn wait_new_clips(dir: &Path, before: &[PathBuf], timeout: Duration) -> (Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_carry_version_2() {
+        let audio = TestAudio { sys_id: None, mic_id: None, mic_name: None };
+        let v = test_settings(Path::new("c"), 60, "Ctrl+F9", &audio);
+        assert_eq!(v["settings_version"], 2);
+    }
 
     #[test]
     fn app_env_isolates_data_and_webview() {

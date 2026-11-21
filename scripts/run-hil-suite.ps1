@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Order: elevated hotkey matrix first (needs one UAC approval, so it runs while
-  you are still at the PC), then the normal matrix, the benchmark and the soak.
+  you are still at the PC), then the normal matrix, a second matrix at GPU load 100, the benchmark and the soak.
   Each step writes into its own folder under -Out; a transcript is kept in
   -Out\suite.log. Steps that fail are recorded and the suite continues.
 
@@ -36,10 +36,9 @@ param(
 $ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Hil = Join-Path $RepoRoot "target\release\hil.exe"
-if (-not (Test-Path -LiteralPath $Hil)) {
-    Write-Host "Building the test kit (release)..."
-    Push-Location $RepoRoot; cargo build --release -p cliplite-testkit; Pop-Location
-}
+Write-Host "Building the test kit (release)..."
+Push-Location $RepoRoot; cargo build --release -p cliplite-testkit; Pop-Location
+if (-not (Test-Path -LiteralPath $Hil)) { throw "Test kit build failed: $Hil not found" }
 if (-not (Test-Path -LiteralPath $App)) { throw "App not found: $App" }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path -LiteralPath $Out).Path
@@ -59,6 +58,7 @@ if (-not $SkipElevated) {
     Step "matrix-elevated" @("matrix", "--app", $App, "--trials", "$Trials", "--elevated", "--out", (Join-Path $Out "matrix-elevated"))
 }
 Step "matrix" @("matrix", "--app", $App, "--trials", "$Trials", "--out", (Join-Path $Out "matrix"))
+Step "matrix-load100" @("matrix", "--app", $App, "--trials", "$Trials", "--gpu-load", "100", "--out", (Join-Path $Out "matrix-load100"))
 Step "bench"  @("bench",  "--app", $App, "--runs", "5", "--duration-secs", "60", "--out", (Join-Path $Out "bench"))
 Step "soak"   @("soak",   "--app", $App, "--hours", "$SoakHours", "--out", (Join-Path $Out "soak"))
 
