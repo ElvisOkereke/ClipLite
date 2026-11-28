@@ -16,12 +16,13 @@
 //!
 //! Dispatcher thread: runs the [`Matcher`] (or [`Capture`] while the settings
 //! UI records a chord), de-duplicates the two paths ([`Dedup`]), logs
-//! `hotkey.pressed` / `hotkey.dispatched`, and runs the action on the tauri
-//! async runtime. It emits `hotkey-fired` after the action ran.
+//! `hotkey.pressed` / `hotkey.dispatched`, and queues the action for one serial
+//! worker task (actions run one at a time, in press order), which emits
+//! `hotkey-fired` after each action ran. Captures time out after 30 s.
 use std::{
     collections::HashMap,
     sync::{
-        mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError},
         Arc, Mutex,
     },
     thread::JoinHandle,
@@ -177,6 +178,9 @@ pub struct HotkeyStatus {
     pub last_hook_install: Option<String>,
     pub hook_installs: u32,
     pub capturing: bool,
+    /// The input thread's message loop is running.
+    pub input_alive: bool,
+    pub dispatcher_alive: bool,
 }
 
 /// Messages to the dispatcher thread.
@@ -187,6 +191,7 @@ pub(crate) enum Msg {
     /// `WM_HOTKEY` for this action.
     Registered(String),
     /// Hooks reinstalled; these raw inputs are held according to the OS.
+    /// Cancels a capture in progress (up-events may have been lost).
     Resync(Vec<Input>),
     Simulate(Action),
     BeginCapture,
@@ -285,110 +290,247 @@ impl Drop for HotkeyListener {
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
-fn dispatch_loop(app: AppHandle, rx: Receiver<Msg>, active: Vec<(String, Chord)>, status: Arc<Mutex<HotkeyStatus>>) {
-    let displays: HashMap<String, String> = active.iter().map(|(a, c)| (a.clone(), c.display())).collect();
-    let mut matcher = Matcher::new(active);
-    let mut capture: Option<Capture> = None;
-    let mut last_holding: Option<Chord> = None;
-    let mut dedup = Dedup::default();
-    let set_capturing = |on: bool| status.lock().unwrap().capturing = on;
+/// A capture with no completed chord after this long is cancelled, so a lost
+/// up-event (Win+L, UAC secure desktop, a dropped hook) cannot leave the
+/// matcher paused forever.
+pub const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
-    for msg in rx {
+/// What the dispatcher loop must do after a message (keeps [`Dispatcher`] pure).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// Queue this action (already de-duplicated). `source` `None` = simulated.
+    Run { action: Action, display: String, source: Option<Source> },
+    /// Emit `hotkey-capture` `{ state, canonical, display }`.
+    Capture { state: &'static str, canonical: String, display: String },
+    /// Emit `hotkey-capture` `{ state: "cancelled", reason }`.
+    CaptureCancelled { reason: &'static str },
+    /// Read the OS key state and pass it to [`Dispatcher::resync`].
+    Resync,
+}
+
+/// Dispatcher state: matcher, capture and de-duplication. Pure; the loop in
+/// `dispatch_loop` performs the returned [`Effect`]s.
+pub struct Dispatcher {
+    matcher: Matcher,
+    /// Capture in progress and when it started.
+    capture: Option<(Capture, Instant)>,
+    last_holding: Option<Chord>,
+    dedup: Dedup,
+    displays: HashMap<String, String>,
+}
+
+impl Dispatcher {
+    pub fn new(active: Vec<(String, Chord)>) -> Self {
+        let displays = active.iter().map(|(a, c)| (a.clone(), c.display())).collect();
+        Self { matcher: Matcher::new(active), capture: None, last_holding: None, dedup: Dedup::default(), displays }
+    }
+
+    pub fn capturing(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    pub fn capture_deadline(&self) -> Option<Instant> {
+        self.capture.as_ref().map(|(_, t)| *t + CAPTURE_TIMEOUT)
+    }
+
+    /// Held state from the OS (after a capture ends): nothing fires, and a
+    /// modifier still held keeps counting.
+    pub fn resync(&mut self, held: Vec<Input>) {
+        self.matcher.reset_held(held);
+    }
+
+    /// Cancel the capture if it has run past [`CAPTURE_TIMEOUT`].
+    pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
+        match self.capture_deadline() {
+            Some(d) if now >= d => self.end_capture("timeout"),
+            _ => Vec::new(),
+        }
+    }
+
+    fn end_capture(&mut self, reason: &'static str) -> Vec<Effect> {
+        self.capture = None;
+        self.last_holding = None;
+        vec![Effect::CaptureCancelled { reason }, Effect::Resync]
+    }
+
+    /// Handle one message (`Msg::Stop` is the loop's business: ignored here).
+    pub fn handle(&mut self, msg: Msg, now: Instant) -> Vec<Effect> {
         match msg {
-            Msg::Raw(ev) => match capture.as_mut() {
-                Some(cap) => match cap.on_event(ev) {
-                    CaptureState::Idle => {}
+            Msg::Raw(ev) => match self.capture.as_mut() {
+                Some((cap, _)) => match cap.on_event(ev) {
+                    CaptureState::Idle => Vec::new(),
                     // Only report changes (not key repeat, clicks or wheel).
                     CaptureState::Holding(chord) => {
-                        if last_holding.as_ref() != Some(&chord) {
-                            emit_capture(&app, "holding", &chord);
-                            last_holding = Some(chord);
+                        if self.last_holding.as_ref() == Some(&chord) {
+                            return Vec::new();
                         }
+                        let e = capture_effect("holding", &chord);
+                        self.last_holding = Some(chord);
+                        vec![e]
                     }
                     CaptureState::Done(chord) => {
-                        emit_capture(&app, "done", &chord);
-                        capture = None;
-                        last_holding = None;
-                        matcher.reset();
-                        set_capturing(false);
+                        self.capture = None;
+                        self.last_holding = None;
+                        vec![capture_effect("done", &chord), Effect::Resync]
                     }
                 },
-                None => {
-                    if let Some(action) = matcher.on_event(ev) {
-                        fire(&app, &mut dedup, &displays, &action, Some(Source::Hook));
+                None => match self.matcher.on_event(ev) {
+                    Some(action) => self.run(&action, Some(Source::Hook), now),
+                    None => Vec::new(),
+                },
+            },
+            // The matcher is paused during a capture, and so is this path.
+            Msg::Registered(action) if !self.capturing() => self.run(&action, Some(Source::Register), now),
+            Msg::Registered(_) => Vec::new(),
+            Msg::Simulate(action) => self.run(action.as_str(), None, now),
+            Msg::Resync(held) => {
+                self.matcher.reset_held(held);
+                if self.capturing() {
+                    self.capture = None;
+                    self.last_holding = None;
+                    vec![Effect::CaptureCancelled { reason: "reinstall" }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Msg::BeginCapture => {
+                self.capture = Some((Capture::default(), now));
+                self.last_holding = None;
+                Vec::new()
+            }
+            Msg::CancelCapture if self.capturing() => self.end_capture("user"),
+            Msg::CancelCapture | Msg::Stop => Vec::new(),
+        }
+    }
+
+    fn run(&mut self, name: &str, source: Option<Source>, now: Instant) -> Vec<Effect> {
+        let Ok(action) = name.parse::<Action>() else {
+            log::debug!("[hotkeys] no action named {name:?}");
+            return Vec::new();
+        };
+        if let Some(src) = source {
+            if !self.dedup.should_run(name, src, now) {
+                log::debug!("[hotkeys] {name}: duplicate from {src:?} dropped");
+                return Vec::new();
+            }
+        }
+        let display = self.displays.get(name).cloned().unwrap_or_default();
+        vec![Effect::Run { action, display, source }]
+    }
+}
+
+fn capture_effect(state: &'static str, chord: &Chord) -> Effect {
+    Effect::Capture { state, canonical: chord.to_canonical(), display: chord.display() }
+}
+
+/// One hotkey action waiting for the serial worker.
+struct Job {
+    action: Action,
+    cid: String,
+    display: String,
+}
+
+/// Run jobs one at a time, in arrival order, until every sender is gone.
+/// Hotkey actions are serialized: a double-tapped pause or replay toggle must
+/// see the result of the first press, and a second start must not race the
+/// first one's engine start.
+pub(crate) async fn run_serially<J, F, Fut>(mut rx: tokio::sync::mpsc::UnboundedReceiver<J>, mut run: F)
+where
+    F: FnMut(J) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    while let Some(job) = rx.recv().await {
+        run(job).await;
+    }
+}
+
+/// The long-lived worker that runs hotkey actions and emits `hotkey-fired`.
+fn spawn_action_worker(app: AppHandle) -> tokio::sync::mpsc::UnboundedSender<Job> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
+    tauri::async_runtime::spawn(run_serially(rx, move |job: Job| {
+        let app = app.clone();
+        async move {
+            let Job { action, cid, display } = job;
+            let name = action.as_str();
+            let payload = match hotkey_actions::run(&app, action, &cid).await {
+                Ok(()) => {
+                    tracing::info!(cid = %cid, action = name, "hotkey action done");
+                    serde_json::json!({ "action": name, "cid": cid, "display": display })
+                }
+                Err(error) => {
+                    tracing::warn!(stage = Stage::Error.as_str(), cid = %cid, action = name, %error, "hotkey action failed");
+                    serde_json::json!({ "action": name, "cid": cid, "error": error })
+                }
+            };
+            app.emit("hotkey-fired", payload).ok();
+        }
+    }));
+    tx
+}
+
+/// The OS's current key state (for [`Dispatcher::resync`]).
+fn os_held_inputs() -> Vec<Input> {
+    #[cfg(windows)]
+    return win::held_now();
+    #[cfg(not(windows))]
+    return Vec::new();
+}
+
+fn dispatch_loop(app: AppHandle, rx: Receiver<Msg>, active: Vec<(String, Chord)>, status: Arc<Mutex<HotkeyStatus>>) {
+    status.lock().unwrap().dispatcher_alive = true;
+    let mut state = Dispatcher::new(active);
+    let jobs = spawn_action_worker(app.clone());
+
+    loop {
+        let effects = match state.capture_deadline() {
+            Some(deadline) => match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Msg::Stop) => break,
+                Ok(msg) => state.handle(msg, Instant::now()),
+                Err(RecvTimeoutError::Timeout) => state.tick(Instant::now()),
+                Err(RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(Msg::Stop) | Err(_) => break,
+                Ok(msg) => state.handle(msg, Instant::now()),
+            },
+        };
+        for effect in effects {
+            match effect {
+                Effect::Run { action, display: chord_display, source } => {
+                    let cid = new_cid();
+                    let src = source.map_or("simulate", |s| match s {
+                        Source::Hook => "hook",
+                        Source::Register => "register",
+                    });
+                    tracing::info!(stage = Stage::HotkeyPressed.as_str(), cid = %cid, action = action.as_str(),
+                                   source = src, chord = %chord_display, "hotkey pressed");
+                    // Logged before the job runs so the log order is pressed ->
+                    // dispatched -> command.received (the HIL matrix sorts by time).
+                    tracing::info!(stage = Stage::HotkeyDispatched.as_str(), cid = %cid,
+                                   action = action.as_str(), "hotkey dispatched");
+                    if jobs.send(Job { action, cid, display: chord_display }).is_err() {
+                        log::error!("[hotkeys] action worker is gone; {} dropped", action.as_str());
                     }
                 }
-            },
-            Msg::Registered(action) => {
-                if capture.is_none() {
-                    fire(&app, &mut dedup, &displays, &action, Some(Source::Register));
+                Effect::Capture { state: s, canonical, display } => {
+                    let payload = serde_json::json!({ "state": s, "canonical": canonical, "display": display });
+                    app.emit("hotkey-capture", payload).ok();
                 }
-            }
-            Msg::Simulate(action) => fire(&app, &mut dedup, &displays, action.as_str(), None),
-            // A capture in progress is left alone: the user is holding its keys.
-            Msg::Resync(held) => matcher.reset_held(held),
-            Msg::BeginCapture => {
-                capture = Some(Capture::default());
-                last_holding = None;
-                set_capturing(true);
-            }
-            Msg::CancelCapture => {
-                if capture.take().is_some() {
-                    matcher.reset();
+                Effect::CaptureCancelled { reason } => {
+                    log::info!("[hotkeys] capture cancelled ({reason})");
+                    app.emit("hotkey-capture", serde_json::json!({ "state": "cancelled", "reason": reason })).ok();
                 }
-                last_holding = None;
-                set_capturing(false);
+                Effect::Resync => state.resync(os_held_inputs()),
             }
-            Msg::Stop => break,
         }
+        status.lock().unwrap().capturing = state.capturing();
+    }
+    {
+        let mut st = status.lock().unwrap();
+        st.dispatcher_alive = false;
+        st.capturing = false;
     }
     log::info!("[hotkeys] dispatcher exited");
-}
-
-fn emit_capture(app: &AppHandle, state: &str, chord: &Chord) {
-    let payload = serde_json::json!({ "state": state, "canonical": chord.to_canonical(), "display": chord.display() });
-    app.emit("hotkey-capture", payload).ok();
-}
-
-/// De-duplicate (`source` `None` = simulated, never de-duplicated), log, and
-/// run the action on the async runtime; emit `hotkey-fired` when it is done.
-fn fire(app: &AppHandle, dedup: &mut Dedup, displays: &HashMap<String, String>, name: &str, source: Option<Source>) {
-    let Ok(action) = name.parse::<Action>() else {
-        log::debug!("[hotkeys] no action named {name:?}");
-        return;
-    };
-    if let Some(src) = source {
-        if !dedup.should_run(name, src, Instant::now()) {
-            log::debug!("[hotkeys] {name}: duplicate from {src:?} dropped");
-            return;
-        }
-    }
-    let cid = new_cid();
-    let chord_display = displays.get(name).cloned().unwrap_or_default();
-    let src = source.map_or("simulate", |s| match s {
-        Source::Hook => "hook",
-        Source::Register => "register",
-    });
-    tracing::info!(stage = Stage::HotkeyPressed.as_str(), cid = %cid, action = name, source = src,
-                   chord = %chord_display, "hotkey pressed");
-    // Logged before the task starts so the log order is pressed ->
-    // dispatched -> command.received (the HIL matrix sorts by timestamp).
-    tracing::info!(stage = Stage::HotkeyDispatched.as_str(), cid = %cid, action = name, "hotkey dispatched");
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let name = action.as_str();
-        let payload = match hotkey_actions::run(&app, action, &cid).await {
-            Ok(()) => {
-                tracing::info!(cid = %cid, action = name, "hotkey action done");
-                serde_json::json!({ "action": name, "cid": cid, "display": chord_display })
-            }
-            Err(error) => {
-                tracing::warn!(stage = Stage::Error.as_str(), cid = %cid, action = name, %error, "hotkey action failed");
-                serde_json::json!({ "action": name, "cid": cid, "error": error })
-            }
-        };
-        app.emit("hotkey-fired", payload).ok();
-    });
 }
 
 // ── Windows input thread ──────────────────────────────────────────────────────
@@ -415,7 +557,6 @@ mod win {
 
     /// Posted to the input thread: reinstall both hooks.
     const WM_APP_REINSTALL: u32 = WM_APP + 1;
-    const WATCHDOG_TIMER: usize = 1;
 
     thread_local! {
         /// The dispatcher channel for the hook callbacks. LL hook callbacks run
@@ -573,7 +714,7 @@ mod win {
 
     /// Raw inputs the OS reports held right now (for `Matcher::reset_held`).
     /// Generic VK_SHIFT/CONTROL/MENU are skipped: the L/R variants report too.
-    fn held_now() -> Vec<Input> {
+    pub(super) fn held_now() -> Vec<Input> {
         let mut held = Vec::new();
         for vk in 4..=0xFEu32 {
             if matches!(vk, 0x10..=0x12) || unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 == 0 {
@@ -649,16 +790,25 @@ mod win {
         hooks.install(hinst, &status);
         log::info!("[hotkeys] input thread running (keyboard hook {}, mouse hook {}, {} RegisterHotKey)",
                    hooks.keyboard.is_some(), hooks.mouse.is_some(), registered.len());
-        if let Some(h) = hwnd {
-            unsafe { SetTimer(h, WATCHDOG_TIMER, WATCHDOG_INTERVAL_MS, None) };
+        // Thread timer (no window): the watchdog works even if the message
+        // window could not be created. WM_TIMER arrives with hwnd NULL.
+        let watchdog = unsafe { SetTimer(HWND::default(), 0, WATCHDOG_INTERVAL_MS, None) };
+        if watchdog == 0 {
+            log::error!("[hotkeys] watchdog timer failed; hooks are not reinstalled periodically");
         }
+        status.lock().unwrap().input_alive = true;
 
         unsafe {
             let mut msg = MSG::default();
             loop {
                 let r = GetMessageW(&mut msg, HWND::default(), 0, 0);
-                if r.0 == 0 || r.0 == -1 {
-                    break; // WM_QUIT, or an error
+                if r.0 == 0 {
+                    break; // WM_QUIT
+                }
+                if r.0 == -1 {
+                    log::error!("[hotkeys] GetMessageW failed ({}); input thread exiting",
+                                windows::core::Error::from_win32());
+                    break;
                 }
                 match msg.message {
                     WM_HOTKEY => {
@@ -668,7 +818,7 @@ mod win {
                             }
                         }
                     }
-                    WM_TIMER if msg.wParam.0 == WATCHDOG_TIMER => reinstall(&mut hooks, hinst, &status, &tx),
+                    WM_TIMER if msg.hwnd.is_invalid() && watchdog != 0 && msg.wParam.0 == watchdog => reinstall(&mut hooks, hinst, &status, &tx),
                     WM_APP_REINSTALL => {
                         log::info!("[hotkeys] resume/unlock: reinstalling hooks");
                         reinstall(&mut hooks, hinst, &status, &tx);
@@ -684,8 +834,10 @@ mod win {
         // Teardown on this thread (it owns the hooks, hotkeys and window).
         hooks.unhook();
         unsafe {
+            if watchdog != 0 {
+                let _ = KillTimer(HWND::default(), watchdog);
+            }
             if let Some(h) = hwnd {
-                let _ = KillTimer(h, WATCHDOG_TIMER);
                 for id in registered.keys() {
                     let _ = UnregisterHotKey(h, *id);
                 }
@@ -703,6 +855,7 @@ mod win {
             let mut st = status.lock().unwrap();
             st.keyboard_hook = false;
             st.mouse_hook = false;
+            st.input_alive = false;
         }
         log::info!("[hotkeys] input thread exited (hooks removed, {} hotkeys unregistered)", registered.len());
     }
