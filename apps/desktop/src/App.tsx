@@ -6,7 +6,7 @@ import { SettingsView } from "./components/SettingsView";
 
 import { getSettings, saveSettings, applyHotkeys, detectHwEncoder, applyCaptureSettings } from "./api";
 import type { Settings, View } from "./types";
-import { firedMessage, type HotkeyFiredEvent } from "./hotkeys";
+import { firedMessage, elevatedNoticeText, type HotkeyFiredEvent } from "./hotkeys";
 
 const DEFAULT_SETTINGS: Settings = {
   output_dir: "",
@@ -85,6 +85,7 @@ export default function App() {
   const [replayToast,   setReplayToast]  = useState<string | null>(null); // filename of saved replay
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [hotkeyToast,   setHotkeyToast]  = useState<{ text: string; error: boolean } | null>(null);
+  const [elevatedExe,   setElevatedExe]  = useState<string | null>(null); // dismissible banner
 
   useEffect(() => {
     if (!hotkeyToast) return;
@@ -107,6 +108,7 @@ export default function App() {
         if (e.payload.action === "replay_save" && !e.payload.error) return;
         setHotkeyToast(firedMessage(e.payload));
       }),
+      listen<{ exe: string }>("elevated-foreground", (e) => setElevatedExe(e.payload.exe ?? "")),
       listen<string>("replay-saved", (e) => {
         // Show the toast with just the filename
         const filename = e.payload.split(/[/\\]/).pop() ?? e.payload;
@@ -165,6 +167,13 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      {elevatedExe !== null && (
+        <div className="notice-banner" role="alert">
+          <span style={{ flex: 1 }}>{elevatedNoticeText(elevatedExe)}</span>
+          <button aria-label="Dismiss" title="Dismiss" onClick={() => setElevatedExe(null)}>×</button>
+        </div>
+      )}
 
       <div className="view">
         {/* Keep RecorderView mounted always so recording state isn't lost on tab switch */}

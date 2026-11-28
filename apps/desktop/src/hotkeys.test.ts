@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitDisplay, findConflicts, isCancelChord } from "./hotkeys";
+import { splitDisplay, findConflicts, isCancelChord, elevatedNoticeText } from "./hotkeys";
 
 describe("splitDisplay", () => {
   it("splits a chord into key caps", () => {
@@ -33,5 +33,19 @@ describe("isCancelChord", () => {
     expect(isCancelChord("Esc")).toBe(true);
     expect(isCancelChord("Ctrl+Escape")).toBe(false);
     expect(isCancelChord("F2")).toBe(false);
+  });
+});
+
+describe("elevatedNoticeText", () => {
+  it("names the app and is honest about what may not work", () => {
+    const t = elevatedNoticeText("game.exe");
+    expect(t).toContain("game.exe is running as administrator");
+    expect(t).toContain("Windows may block ClipLite's shortcuts");
+    expect(t).toContain("restart ClipLite as administrator");
+    expect(t).toContain("Keyboard-only");
+    expect(t).not.toMatch(/still work/i);
+  });
+  it("falls back to a generic name", () => {
+    expect(elevatedNoticeText("")).toMatch(/^An elevated app is running as administrator/);
   });
 });

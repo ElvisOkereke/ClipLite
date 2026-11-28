@@ -7,6 +7,7 @@ mod settings;
 mod tray;
 mod hotkey_listener;
 mod hotkey_actions;
+mod elevation;
 mod test_mode;
 
 use std::sync::Mutex;
@@ -86,6 +87,8 @@ pub fn run() {
                 settings.hotkeys.clone(),
             );
             *app.state::<HotkeyListenerHandle>().0.lock().unwrap() = Some(listener);
+
+            elevation::spawn_poller(app.handle().clone());
 
             // Detect the hardware encoder once at startup, then turn the
             // replay buffer on if Settings has it on (test mode uses the same path).

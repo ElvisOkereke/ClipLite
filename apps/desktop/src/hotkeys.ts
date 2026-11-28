@@ -80,3 +80,10 @@ export interface BindingStatus {
   register_error?: string | null;
 }
 export interface HotkeyStatus { bindings: BindingStatus[]; capturing: boolean }
+
+/** Banner text for an `elevated-foreground` event. Deliberately hedged:
+ *  whether shortcuts survive an elevated foreground app is not guaranteed. */
+export function elevatedNoticeText(exe: string): string {
+  const name = exe.trim() || "An elevated app";
+  return `${name} is running as administrator. Windows may block ClipLite's shortcuts while it's focused \u2014 if they don't work, restart ClipLite as administrator. Keyboard-only combos (e.g. Ctrl+F2) have the best chance; mouse buttons and modifier-only shortcuts are the most likely to be blocked.`;
+}

@@ -11,7 +11,7 @@ ClipLite records your screen and keeps a rolling replay buffer, so you can save 
 
 The project is being rebuilt in public. The roadmap turns it into an **AI highlight engine that runs entirely on your PC**: it finds the moments for you, makes your clip library searchable by what was said and shown, and cuts Shorts automatically. Every step is measured by a hardware-in-the-loop test rig.
 
-> **Status (Nov 2026):** Phase 1 · WS0 (foundation, observability and test kit) is complete and under review in [PR #2](https://github.com/ElvisOkereke/ClipLite/pull/2). Next: fixing in-game capture and hotkeys. See the [roadmap](docs/ROADMAP.md).
+> **Status (Nov 2026):** Phase 1 · WS0 (foundation, observability and test kit) is complete and under review in [PR #2](https://github.com/ElvisOkereke/ClipLite/pull/2). WS1 (hotkeys) is built on a branch and awaiting hardware verification; capture-in-fullscreen is next. See the [roadmap](docs/ROADMAP.md).
 
 ---
 
@@ -25,7 +25,7 @@ The project is being rebuilt in public. The roadmap turns it into an **AI highli
 
 **Known issues** (measured, and scheduled in the roadmap):
 - Capture can stop when a game switches to exclusive fullscreen.
-- Hotkeys don't reach ClipLite while a game running as administrator has focus.
+- Hotkeys didn't reach ClipLite while a game running as administrator had focus (1/60). The WS1 rewrite adds a second delivery path and an in-app notice, but it is **not yet verified** on hardware.
 
 Both are documented with evidence in the [baseline report](docs/benchmarks/raw/baseline/README.md).
 
@@ -161,9 +161,12 @@ Use this section to describe the project accurately. Everything under **Built an
 
   Evidence: `tools/testkit/`.
 - **Root-caused and fixed a 21 s save stall**, now under 1 s (about 28× faster), caused by an undrained FFmpeg stderr pipe. Evidence: `docs/benchmarks/raw/baseline/README.md`, `docs/benchmarks/raw/phase1-ws0-checks/`.
-- **Diagnosed the "hotkeys/capture fail in fullscreen" reports** as two separate causes, each with evidence: UIPI blocking the keyboard hook for elevated games (1/60 vs 60/60), and `DXGI_ERROR_ACCESS_LOST` ending capture in exclusive fullscreen. These are diagnosed, not yet fixed.
+- **Diagnosed the "hotkeys/capture fail in fullscreen" reports** as two separate causes, each with evidence: UIPI blocking the keyboard hook for elevated games (1/60 vs 60/60), and `DXGI_ERROR_ACCESS_LOST` ending capture in exclusive fullscreen. These are diagnosed, not yet fixed in a verified way.
 - **Benchmarked performance cost:** −2.5 % average fps / −8.7 % 1%-low fps, about 650 MB, about 1 % CPU core, flat memory over 2 h.
 - **Build and release:** CI on Windows with zero warnings, 78 tests, pinned and checksum-verified FFmpeg (including a driver-compatibility analysis), and an installer that bundles the recorder.
+
+**Built, hardware verification pending**
+- **WS1 hotkeys rewrite** (branch `phase1/ws1`): hooks plus `RegisterHotKey` on one Rust input thread, Rust-side action dispatch, capture of any chord (mouse, modifier-only) through the hook, conflict warnings, and an elevated-foreground banner. Unit-tested, but the 20/20 hardware matrix, the elevated matrix and a real-game check have not been run, so do not claim the hotkey problem is fixed. Evidence and open items: `docs/adr/0003-hotkeys.md`.
 
 **Planned (do not describe as built)**
 - AI or ML features of any kind (transcription, search, highlight detection), the model registry, eval sets, and quantization.
