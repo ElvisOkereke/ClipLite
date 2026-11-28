@@ -83,6 +83,7 @@ export default function App() {
   const [status,        setStatus]       = useState("");
   const [hwEncoder,     setHwEncoder]    = useState("h264_nvenc");
   const [replayToast,   setReplayToast]  = useState<string | null>(null); // filename of saved replay
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [hotkeyToast,   setHotkeyToast]  = useState<{ text: string; error: boolean } | null>(null);
 
   useEffect(() => {
@@ -92,7 +93,7 @@ export default function App() {
   }, [hotkeyToast]);
 
   useEffect(() => {
-    getSettings().then(setSettings).catch(console.error);
+    getSettings().then(s => { setSettings(s); setSettingsLoaded(true); }).catch(console.error);
     detectHwEncoder().then(setHwEncoder).catch(() => {});
 
     // Listen for tray, hotkey, and replay events
@@ -102,8 +103,9 @@ export default function App() {
         if (e.payload === "library" || e.payload === "recorder" || e.payload === "settings") setView(e.payload);
       }),
       listen<HotkeyFiredEvent>("hotkey-fired", (e) => {
-        const m = firedMessage(e.payload);
-        setHotkeyToast(m);
+        // Replay saves already get the "replay-saved" toast; show only failures then.
+        if (e.payload.action === "replay_save" && !e.payload.error) return;
+        setHotkeyToast(firedMessage(e.payload));
       }),
       listen<string>("replay-saved", (e) => {
         // Show the toast with just the filename
@@ -175,7 +177,7 @@ export default function App() {
           />
         </div>
         {view === "library"  && <LibraryView onStatus={setStatus} />}
-        {view === "settings" && <SettingsView settings={settings} onSave={handleSaveSettings} />}
+        {view === "settings" && <SettingsView settings={settings} onSave={handleSaveSettings} ready={settingsLoaded} />}
       </div>
 
       <div className="status-bar" style={{ display: "flex", alignItems: "center", gap: 6 }}>

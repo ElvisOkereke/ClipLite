@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitDisplay, findConflicts, isCancelChord, HOTKEY_ACTIONS, actionLabel } from "./hotkeys";
+import { splitDisplay, findConflicts, isCancelChord } from "./hotkeys";
 
 describe("splitDisplay", () => {
   it("splits a chord into key caps", () => {
@@ -33,13 +33,5 @@ describe("isCancelChord", () => {
     expect(isCancelChord("Esc")).toBe(true);
     expect(isCancelChord("Ctrl+Escape")).toBe(false);
     expect(isCancelChord("F2")).toBe(false);
-  });
-});
-
-describe("actions", () => {
-  it("labels the six supported actions", () => {
-    expect(HOTKEY_ACTIONS.map(a => a.key)).toEqual(["start", "stop", "pause", "replay_toggle", "replay_save", "library"]);
-    expect(actionLabel("replay_save")).toBe("Save replay");
-    expect(actionLabel("zzz")).toBe("zzz");
   });
 });

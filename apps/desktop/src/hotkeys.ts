@@ -74,7 +74,7 @@ export function firedMessage(e: HotkeyFiredEvent): { text: string; error: boolea
 /** One entry of `get_debug_state().hotkey_status.bindings`. */
 export interface BindingStatus {
   action: string;
-  canonical: string;
+  canonical: string | null;
   parsed: boolean;
   registered: boolean | null;
   register_error?: string | null;

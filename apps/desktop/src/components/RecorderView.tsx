@@ -146,26 +146,45 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   // ── Status sync ───────────────────────────────────────────────────────────
   // Hotkey actions run in Rust, so the backend is the source of truth: pull
   // its status every 3 s and immediately after a `hotkey-fired` event.
+  const busyRef = useRef(busy); busyRef.current = busy;
+  const replayBusyRef = useRef(replayBusy); replayBusyRef.current = replayBusy;
+  const isRecordingRef = useRef(isRecording); isRecordingRef.current = isRecording;
+  const isPausedRef = useRef(isPaused); isPausedRef.current = isPaused;
+  const replayActiveRef = useRef(replayActive); replayActiveRef.current = replayActive;
+  // epochRef is bumped by every local action; a poll that started before one
+  // is stale and must not overwrite the state that action set.
+  const epochRef = useRef(0);
   const syncRef = useRef<() => Promise<void>>(async () => {});
   syncRef.current = async () => {
     if (busy || replayBusy) return; // a click-driven action is mid-flight and will set the state itself
+    const epoch = epochRef.current;
     try {
       const s = await getRecordingStatus();
-      if (s.is_recording !== isRecording) {
+      if (epoch !== epochRef.current || busyRef.current || replayBusyRef.current) return;
+      const wasRecording = isRecordingRef.current;
+      const wasPaused = isPausedRef.current;
+      if (s.is_recording !== wasRecording) {
         setIsRecording(s.is_recording);
         if (s.is_recording) {
           startedAtRef.current = Date.now() - (s.elapsed_seconds ?? 0) * 1000;
           pausedDurRef.current = 0;
+          onStatus("Recording started.");
         } else {
           setElapsedSecs(0);
+          onStatus("Recording stopped.");
         }
       }
-      if (s.is_recording && s.is_paused !== isPaused) {
-        if (s.is_paused) pauseStartRef.current = Date.now();
-        else pausedDurRef.current += Date.now() - pauseStartRef.current;
+      const paused = s.is_recording && s.is_paused;
+      if (paused !== wasPaused) {
+        if (paused) pauseStartRef.current = Date.now();
+        else if (wasRecording) pausedDurRef.current += Date.now() - pauseStartRef.current;
+        setIsPaused(paused);
+        if (s.is_recording && wasRecording) onStatus(paused ? "Paused." : "Resumed.");
       }
-      setIsPaused(s.is_recording && s.is_paused);
-      if (s.replay_active !== replayActive) setReplayActive(s.replay_active);
+      if (s.replay_active !== replayActiveRef.current) {
+        setReplayActive(s.replay_active);
+        onStatus(s.replay_active ? "Replay buffer active." : "Replay buffer stopped.");
+      }
       setBufferedSecs(s.buffered_secs ?? 0);
       setRestarts(s.restarts ?? 0);
     } catch { /* ignore */ }
@@ -217,17 +236,23 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     return { x: m.x??0, y: m.y??0, width: m.width??1920, height: m.height??1080, monitor: selectedMonitor };
   };
 
+  // Every local action bumps the epoch before and after, so an in-flight
+  // status poll can never overwrite what the action just set.
+  const tracked = (f: () => Promise<void>) => async () => {
+    epochRef.current++;
+    try { await f(); } finally { epochRef.current++; }
+  };
   // handleRecord is the UI button toggle (start if stopped, stop if recording)
   const handleRecord = async () => {
     if (isRecording) { await handleStopRecord(); } else { await handleStartRecord(); }
   };
 
-  const handleStartRecord = async (cid?: string) => {
+  const handleStartRecordInner = async () => {
     if (busy || isRecording) return;
     setBusy(true);
     onStatus("Starting…");
     try {
-      const path = await startRecording(buildRegion(), buildAudioCfg(), buildEncCfg(), cid);
+      const path = await startRecording(buildRegion(), buildAudioCfg(), buildEncCfg());
       startedAtRef.current = Date.now(); pausedDurRef.current = 0;
       setIsRecording(true); setIsPaused(false);
       onStatus(`Recording → ${path.split(/[/\\]/).pop()}`);
@@ -236,28 +261,28 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     } finally { setBusy(false); }
   };
 
-  const handleStopRecord = async (cid?: string) => {
+  const handleStopRecordInner = async () => {
     if (busy || !isRecording) return;
     setBusy(true);
     setIsRecording(false); setIsPaused(false); setElapsedSecs(0);
     onStatus("Stopping…");
     try {
-      const path = await stopRecording(cid);
+      const path = await stopRecording();
       onStatus(path ? `Saved: ${path.split(/[/\\]/).pop()}` : "Stopped.");
     } catch (e: any) {
       onStatus(`Stop error: ${e}`);
     } finally { setBusy(false); }
   };
 
-  const handlePauseResume = async (cid?: string) => {
+  const handlePauseResumeInner = async () => {
     if (!isRecording || busy) return;
     try {
       if (isPaused) {
-        await resumeRecording(cid);
+        await resumeRecording();
         pausedDurRef.current += Date.now() - pauseStartRef.current;
         setIsPaused(false); onStatus("Resumed.");
       } else {
-        await pauseRecording(cid);
+        await pauseRecording();
         pauseStartRef.current = Date.now();
         setIsPaused(true); onStatus("Paused.");
       }
@@ -265,16 +290,16 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
   };
 
   // ── Replay buffer handlers ────────────────────────────────────────────────
-  const handleReplayToggle = async (cid?: string) => {
+  const handleReplayToggleInner = async () => {
     if (replayBusy || REPLAY_OPTIONS[replayIdx].secs === 0) return;
     setReplayBusy(true);
     try {
       if (replayActive) {
-        await stopReplay(cid);
+        await stopReplay();
         setReplayActive(false);
         onStatus("Replay buffer stopped.");
       } else {
-        await startReplay(buildRegion(), buildAudioCfg(), buildEncCfg(), cid);
+        await startReplay(buildRegion(), buildAudioCfg(), buildEncCfg());
         setReplayActive(true);
         onStatus(`Replay buffer active (${REPLAY_OPTIONS[replayIdx].label}).`);
       }
@@ -283,14 +308,14 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     } finally { setReplayBusy(false); }
   };
 
-  const handleSaveReplay = async (cid?: string) => {
+  const handleSaveReplayInner = async () => {
     if (!replayActive || replayBusy) return;
     setReplayBusy(true);
     const secs = REPLAY_OPTIONS[replayIdx].secs;
     if (secs === 0) { onStatus("Set a replay duration first."); setReplayBusy(false); return; }
     onStatus("Saving replay…");
     try {
-      const path = await saveReplay(secs, cid);
+      const path = await saveReplay(secs);
       onStatus(path ? `Replay saved: ${path.split(/[/\\]/).pop()}` : "Replay saved.");
       // Buffer is auto-restarted on the backend — keep replayActive=true optimistically.
       // A status poll will correct it within 3s if restart actually failed.
@@ -301,6 +326,12 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       setReplayActive(false);
     } finally { setReplayBusy(false); }
   };
+
+  const handleStartRecord = tracked(handleStartRecordInner);
+  const handleStopRecord = tracked(handleStopRecordInner);
+  const handlePauseResume = tracked(handlePauseResumeInner);
+  const handleReplayToggle = tracked(handleReplayToggleInner);
+  const handleSaveReplay = tracked(handleSaveReplayInner);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (

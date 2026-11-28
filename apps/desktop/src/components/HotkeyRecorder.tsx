@@ -10,6 +10,8 @@ import {
 
 interface Props {
   hotkeys: Record<string, string>;
+  /** Bump to re-read hotkey status (after settings were applied). */
+  refreshKey?: number;
   onChange: (action: string, canonical: string) => void;
 }
 
@@ -24,7 +26,7 @@ function KeyCaps({ display }: { display: string }) {
 /** Shortcut list. Recording happens in Rust (low-level hook), so any key,
  *  mouse button or modifier-only chord can be bound, and nothing typed here
  *  reaches the page or triggers an action. */
-export function HotkeyRecorder({ hotkeys, onChange }: Props) {
+export function HotkeyRecorder({ hotkeys, onChange: onChangeProp, refreshKey = 0 }: Props) {
   const [desc, setDesc] = useState<Record<string, HotkeyDescription>>({});
   const [defaults, setDefaults] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
@@ -33,8 +35,15 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
   const [note, setNote] = useState("");
 
   const capturingRef = useRef<string | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const mountedRef = useRef(true);
+  const onChangeRef = useRef(onChangeProp);
+  onChangeRef.current = onChangeProp;
+
+  // Any edit drops the cached description so a stale chord is never shown.
+  const onChange = (action: string, value: string) => {
+    setDesc(prev => { const { [action]: _gone, ...rest } = prev; return rest; });
+    onChangeProp(action, value);
+  };
 
   const setCap = (a: string | null) => { capturingRef.current = a; setCapturing(a); };
 
@@ -49,15 +58,17 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
   const hotkeysKey = JSON.stringify(hotkeys);
   useEffect(() => {
     let current = true;
-    describeHotkeys(hotkeys).then(d => { if (current) setDesc(d); }).catch(() => {});
+    describeHotkeys(hotkeys).then(d => { if (current) setDesc(d); }).catch(() => { if (current) setDesc({}); });
     return () => { current = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotkeysKey]);
 
   useEffect(() => {
     defaultHotkeys().then(setDefaults).catch(() => {});
-    getHotkeyStatus().then(setStatus).catch(() => {});
   }, []);
+  useEffect(() => {
+    getHotkeyStatus().then(setStatus).catch(() => {});
+  }, [refreshKey]);
 
   // Capture progress from Rust.
   useEffect(() => {
@@ -73,6 +84,8 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
           setNote("");
           onChangeRef.current(action, ev.canonical);
         }
+      } else if (ev.reason === "user") {
+        return; // UI-initiated; the UI already updated itself (a late one must not clobber a new capture)
       } else if (ev.reason === "reinstall") {
         // The hook watchdog restarted the hooks; carry on transparently.
         beginHotkeyCapture().catch(() => { setCap(null); setLiveChord(""); });
@@ -86,6 +99,7 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
 
   // Cancel on unmount.
   useEffect(() => () => {
+    mountedRef.current = false;
     if (capturingRef.current !== null) cancelHotkeyCapture().catch(() => {});
   }, []);
 
@@ -117,20 +131,23 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
 
   const change = async (action: string) => {
     if (capturingRef.current === action) { stopCapture(); return; }
-    if (capturingRef.current !== null) await cancelHotkeyCapture().catch(() => {});
+    const switching = capturingRef.current !== null;
+    setCap(action); // synchronously, before any await
     setNote(""); setLiveChord("");
     try {
+      if (switching) await cancelHotkeyCapture().catch(() => {});
       await beginHotkeyCapture();
-      setCap(action);
+      if (!mountedRef.current) cancelHotkeyCapture().catch(() => {});
     } catch (e) {
-      setCap(null);
+      if (capturingRef.current === action) { setCap(null); }
       setNote(`Could not start recording: ${e}`);
     }
   };
 
   const canonicalOf = (a: string) => {
     const d = desc[a];
-    return d?.valid ? d.canonical : (hotkeys[a] ?? "");
+    if (!hotkeys[a]) return "";
+    return d?.valid ? d.canonical : hotkeys[a];
   };
   const conflicts = findConflicts(
     Object.fromEntries(HOTKEY_ACTIONS.map(a => [a.key, canonicalOf(a.key)])),
@@ -159,12 +176,14 @@ export function HotkeyRecorder({ hotkeys, onChange }: Props) {
                     {liveChord ? <KeyCaps display={liveChord} /> : null}
                     <span className="hotkey-hint">Press your shortcut… (Esc to cancel)</span>
                   </>
+                ) : !raw ? (
+                  <span className="hotkey-hint">Not set</span>
                 ) : d?.valid ? (
                   <KeyCaps display={d.display} />
-                ) : raw ? (
+                ) : d ? (
                   <span className="hotkey-warn">Not a valid shortcut ({raw})</span>
                 ) : (
-                  <span className="hotkey-hint">Not set</span>
+                  <span className="hotkey-hint">{raw}</span>
                 )}
               </span>
               <button className="btn btn-secondary btn-sm" data-capture-btn onClick={() => change(key)}>

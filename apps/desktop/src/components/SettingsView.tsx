@@ -6,10 +6,13 @@ import { FPS_OPTIONS, QUALITY_PRESETS } from "../types";
 
 interface Props {
   settings: Settings;
-  onSave: (s: Settings) => void;
+  onSave: (s: Settings) => void | Promise<void>;
+  /** False until the real settings arrived (never save the placeholder). */
+  ready?: boolean;
 }
 
-export function SettingsView({ settings, onSave }: Props) {
+export function SettingsView({ settings, onSave, ready = true }: Props) {
+  const [appliedTick, setAppliedTick] = useState(0);
   const [s, setS] = useState<Settings>({ ...settings });
 
   const update = (key: keyof Settings, value: any) =>
@@ -154,11 +157,12 @@ export function SettingsView({ settings, onSave }: Props) {
       <div className="settings-section">
         <h3>Hotkeys</h3>
         <div className="card">
-          <HotkeyRecorder hotkeys={s.hotkeys} onChange={updateHotkey} />
+          <HotkeyRecorder hotkeys={s.hotkeys} onChange={updateHotkey} refreshKey={appliedTick} />
         </div>
       </div>
 
-      <button className="btn btn-primary" style={{ width: "100%" }} onClick={() => onSave(s)}>
+      <button className="btn btn-primary" style={{ width: "100%" }} disabled={!ready}
+        onClick={async () => { await onSave(s); setAppliedTick(t => t + 1); }}>
         Save Settings
       </button>
     </div>
