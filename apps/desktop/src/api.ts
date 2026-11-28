@@ -6,6 +6,7 @@ import type {
   AudioConfig, AudioDevice, Clip, EncConfig, ExportFormat,
   MonitorInfo, RecordingStatus, Region, Settings,
 } from "./types";
+import type { HotkeyDescription, HotkeyStatus } from "./hotkeys";
 
 // FFmpeg
 export const findFFmpeg = () => invoke<string>("find_ffmpeg");
@@ -64,3 +65,12 @@ export const exportClip = (
 
 // Re-apply monitor/audio/fps/quality to the running replay buffer (no-op while recording)
 export const applyCaptureSettings = () => invoke<void>("apply_capture_settings");
+
+// Hotkeys (Rust owns capture, matching and actions)
+export const beginHotkeyCapture = () => invoke<void>("begin_hotkey_capture");
+export const cancelHotkeyCapture = () => invoke<void>("cancel_hotkey_capture");
+export const describeHotkeys = (hotkeys: Record<string, string>) =>
+  invoke<Record<string, HotkeyDescription>>("describe_hotkeys", { hotkeys });
+export const defaultHotkeys = () => invoke<Record<string, string>>("default_hotkeys");
+export const getHotkeyStatus = () =>
+  invoke<{ hotkey_status: HotkeyStatus | null }>("get_debug_state").then(s => s.hotkey_status);

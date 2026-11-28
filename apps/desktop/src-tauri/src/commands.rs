@@ -753,6 +753,48 @@ pub fn save_settings(app: AppHandle, mut settings: Settings, state: State<'_, Se
     Ok(())
 }
 
+/// How the UI shows one saved binding.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct HotkeyDescription {
+    pub canonical: String,
+    pub display: String,
+    pub valid: bool,
+}
+
+/// Canonical + display form of each saved binding, so the UI never has to
+/// know the chord grammar. Unparsable or empty strings come back unchanged
+/// with `valid: false` and an empty display.
+pub fn describe_bindings(
+    map: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, HotkeyDescription> {
+    map.iter()
+        .map(|(action, s)| {
+            let d = match cliplite_core::hotkey::Chord::parse(s) {
+                Ok(c) if !c.is_empty() => HotkeyDescription {
+                    canonical: c.to_canonical(),
+                    display: c.display(),
+                    valid: true,
+                },
+                _ => HotkeyDescription { canonical: s.clone(), display: String::new(), valid: false },
+            };
+            (action.clone(), d)
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn describe_hotkeys(
+    hotkeys: std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, HotkeyDescription> {
+    describe_bindings(&hotkeys)
+}
+
+/// The factory bindings (`Settings::default`), for the UI's Reset button.
+#[tauri::command]
+pub fn default_hotkeys() -> std::collections::HashMap<String, String> {
+    crate::settings::Settings::default().hotkeys
+}
+
 /// Re-register global hotkeys from the current settings.
 /// Called explicitly after the user confirms changes in SettingsView —
 /// NOT on every incremental save (which fires for every slider/dropdown change).
@@ -993,5 +1035,34 @@ mod export_tests {
             assert!((d - 2.0).abs() < 0.6, "{fmt}: duration {d}");
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn describes_legacy_and_new_strings() {
+        let mut m = HashMap::new();
+        m.insert("start".to_string(), "CommandOrControl+Shift+R".to_string());
+        m.insert("stop".to_string(), "".to_string());
+        m.insert("pause".to_string(), "Bogus+Nope".to_string());
+        let d = describe_bindings(&m);
+        assert_eq!(d["start"], HotkeyDescription {
+            canonical: "Ctrl+Shift+R".into(), display: "Ctrl + Shift + R".into(), valid: true,
+        });
+        assert!(!d["stop"].valid && d["stop"].display.is_empty());
+        assert!(!d["pause"].valid);
+    }
+
+    #[test]
+    fn default_hotkeys_all_parse_and_cover_every_action() {
+        let d = crate::settings::Settings::default().hotkeys;
+        for a in ["start", "stop", "pause", "replay_toggle", "replay_save", "library"] {
+            assert!(d.contains_key(a), "{a}");
+        }
+        assert!(describe_bindings(&d).values().all(|x| x.valid));
     }
 }

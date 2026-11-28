@@ -6,6 +6,7 @@ import { SettingsView } from "./components/SettingsView";
 
 import { getSettings, saveSettings, applyHotkeys, detectHwEncoder, applyCaptureSettings } from "./api";
 import type { Settings, View } from "./types";
+import { firedMessage, type HotkeyFiredEvent } from "./hotkeys";
 
 const DEFAULT_SETTINGS: Settings = {
   output_dir: "",
@@ -18,14 +19,7 @@ const DEFAULT_SETTINGS: Settings = {
   sys_audio_device_id: null,
   capture_cursor: true,
   show_keystroke_hud: true,
-  hotkeys: {
-    start:         "CommandOrControl+Shift+R",
-    stop:          "CommandOrControl+Shift+S",
-    pause:         "CommandOrControl+Shift+P",
-    library:       "CommandOrControl+Shift+L",
-    replay_toggle: "CommandOrControl+Shift+B",
-    replay_save:   "CommandOrControl+Shift+F",
-  },
+  hotkeys: {}, // loaded from Rust (Settings::default is the single source)
   hw_encoder: "auto",
   minimize_to_tray: true,
   filename_template: "recording_{datetime}",
@@ -89,6 +83,13 @@ export default function App() {
   const [status,        setStatus]       = useState("");
   const [hwEncoder,     setHwEncoder]    = useState("h264_nvenc");
   const [replayToast,   setReplayToast]  = useState<string | null>(null); // filename of saved replay
+  const [hotkeyToast,   setHotkeyToast]  = useState<{ text: string; error: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!hotkeyToast) return;
+    const id = window.setTimeout(() => setHotkeyToast(null), hotkeyToast.error ? 5000 : 2000);
+    return () => clearTimeout(id);
+  }, [hotkeyToast]);
 
   useEffect(() => {
     getSettings().then(setSettings).catch(console.error);
@@ -97,7 +98,13 @@ export default function App() {
     // Listen for tray, hotkey, and replay events
     const unlisteners = [
       listen("tray-start-recording", () => setView("recorder")),
-      listen("hotkey-open-library",  () => setView("library")),
+      listen<string>("navigate", (e) => {
+        if (e.payload === "library" || e.payload === "recorder" || e.payload === "settings") setView(e.payload);
+      }),
+      listen<HotkeyFiredEvent>("hotkey-fired", (e) => {
+        const m = firedMessage(e.payload);
+        setHotkeyToast(m);
+      }),
       listen<string>("replay-saved", (e) => {
         // Show the toast with just the filename
         const filename = e.payload.split(/[/\\]/).pop() ?? e.payload;
@@ -195,6 +202,10 @@ export default function App() {
           </button>
         )}
       </div>
+
+      {hotkeyToast && (
+        <div className={`toast${hotkeyToast.error ? " error" : ""}`} role="status">{hotkeyToast.text}</div>
+      )}
 
       {/* Replay saved toast — appears for 3 seconds over everything */}
       {replayToast && (

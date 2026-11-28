@@ -1,10 +1,12 @@
 import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { HOTKEY_ACTIONS, type HotkeyFiredEvent, type HotkeyStatus } from "../hotkeys";
 
 interface DebugState {
   hotkeys: Record<string, string>;
   listener_alive: boolean;
+  hotkey_status: HotkeyStatus | null;
   is_recording: boolean;
   timestamp: string;
 }
@@ -14,16 +16,8 @@ interface HotkeyEvent {
   timestamp: string;
 }
 
-// Maps the short action key (used by simulate buttons) to the full event name
-// that the backend emits and the frontend listens for.
-const ACTION_TO_EVENT: Record<string, string> = {
-  "start":            "hotkey-start-recording",
-  "stop":             "hotkey-stop-recording",
-  "pause":            "hotkey-pause-recording",
-  "library":          "hotkey-open-library",
-  "replay_toggle":    "hotkey-replay-toggle",
-  "replay_save":      "hotkey-replay-save",
-};
+// Actions the Rust dispatcher runs (simulate_hotkey takes these names).
+const SIMULATE_ACTIONS = HOTKEY_ACTIONS.map(a => a.key);
 
 interface Props {
   enabled: boolean;
@@ -57,17 +51,15 @@ export function DebugPanel({ enabled }: Props) {
     return () => clearInterval(interval);
   }, []);
 
-  // Listen for all hotkey events so the debug panel shows them arriving (runs even when collapsed)
+  // Rust emits `hotkey-fired` after running each action; show them arriving.
   useEffect(() => {
-    const eventNames = Object.values(ACTION_TO_EVENT);
-    const unlisteners = eventNames.map(name =>
-      listen(name, () => {
-        const ts = new Date().toLocaleTimeString();
-        console.log(`[DebugPanel] Event received: ${name} at ${ts}`);
-        setHotkeyEvents(prev => [{ name, timestamp: ts }, ...prev].slice(0, 50));
-      })
-    );
-    return () => { unlisteners.forEach(p => p.then(f => f())); };
+    const p = listen<HotkeyFiredEvent>("hotkey-fired", (e) => {
+      const ts = new Date().toLocaleTimeString();
+      const { action, cid, error } = e.payload;
+      const name = `${action} [${cid}]${error ? ` ERROR: ${error}` : ""}`;
+      setHotkeyEvents(prev => [{ name, timestamp: ts }, ...prev].slice(0, 50));
+    });
+    return () => { p.then(f => f()); };
   }, []);
 
   // Auto-scroll to latest event
@@ -77,8 +69,7 @@ export function DebugPanel({ enabled }: Props) {
     }
   }, [hotkeyEvents]);
 
-  // action is the short key e.g. "start-recording" → simulate_hotkey gets "start-recording"
-  // Rust: format!("hotkey-{action}") → "hotkey-start-recording" ✓
+  // Runs the action through the Rust dispatcher, exactly like a real press.
   const simulateHotkey = async (action: string) => {
     try {
       console.log(`[DebugPanel] Simulating: ${action}`);
@@ -228,7 +219,7 @@ export function DebugPanel({ enabled }: Props) {
             gap: 4,
           }}
         >
-          {Object.keys(ACTION_TO_EVENT).map((action) => (
+          {SIMULATE_ACTIONS.map((action) => (
             <button
               key={action}
               onClick={() => simulateHotkey(action)}

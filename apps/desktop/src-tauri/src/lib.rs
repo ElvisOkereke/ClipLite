@@ -68,6 +68,8 @@ pub fn run() {
             commands::simulate_hotkey,
             commands::begin_hotkey_capture,
             commands::cancel_hotkey_capture,
+            commands::describe_hotkeys,
+            commands::default_hotkeys,
         ])
         .setup(|app| {
             library::init_db().expect("Failed to initialize database");

@@ -231,3 +231,32 @@ select option { background: var(--bg-card); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #444; }
+
+/* Hotkeys */
+.keycaps { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.keycap {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  font-family: inherit;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.hotkey-row { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.hotkey-main { display: flex; align-items: center; gap: 6px; }
+.hotkey-label { width: 150px; flex-shrink: 0; font-size: 12px; }
+.hotkey-binding { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hotkey-hint { font-size: 11px; color: var(--text-muted); }
+.hotkey-warn { font-size: 11px; color: #f0b429; margin-top: 3px; }
+.hotkey-main .hotkey-warn { margin-top: 0; }
+.toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 9999;
+  padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #fff;
+  background: rgba(15,155,88,0.95); box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 380px; }
+.toast.error { background: rgba(200,50,70,0.95); }

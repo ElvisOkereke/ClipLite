@@ -143,25 +143,41 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     return () => clearInterval(id);
   }, [isRecording, isPaused]);
 
-  // ── Status poll — detects crashes and keeps replay state in sync ─────────
+  // ── Status sync ───────────────────────────────────────────────────────────
+  // Hotkey actions run in Rust, so the backend is the source of truth: pull
+  // its status every 3 s and immediately after a `hotkey-fired` event.
+  const syncRef = useRef<() => Promise<void>>(async () => {});
+  syncRef.current = async () => {
+    if (busy || replayBusy) return; // a click-driven action is mid-flight and will set the state itself
+    try {
+      const s = await getRecordingStatus();
+      if (s.is_recording !== isRecording) {
+        setIsRecording(s.is_recording);
+        if (s.is_recording) {
+          startedAtRef.current = Date.now() - (s.elapsed_seconds ?? 0) * 1000;
+          pausedDurRef.current = 0;
+        } else {
+          setElapsedSecs(0);
+        }
+      }
+      if (s.is_recording && s.is_paused !== isPaused) {
+        if (s.is_paused) pauseStartRef.current = Date.now();
+        else pausedDurRef.current += Date.now() - pauseStartRef.current;
+      }
+      setIsPaused(s.is_recording && s.is_paused);
+      if (s.replay_active !== replayActive) setReplayActive(s.replay_active);
+      setBufferedSecs(s.buffered_secs ?? 0);
+      setRestarts(s.restarts ?? 0);
+    } catch { /* ignore */ }
+  };
   useEffect(() => {
-    const poll = window.setInterval(async () => {
-      try {
-        const s = await getRecordingStatus();
-        // Detect recording crash
-        if (isRecording && !s.is_recording) {
-          setIsRecording(false); setIsPaused(false); setElapsedSecs(0);
-        }
-        // Keep replay state in sync with the backend (catches external kills too)
-        if (s.replay_active !== replayActive) {
-          setReplayActive(s.replay_active);
-        }
-        setBufferedSecs(s.buffered_secs ?? 0);
-        setRestarts(s.restarts ?? 0);
-      } catch { /* ignore */ }
-    }, 3000);
+    const poll = window.setInterval(() => syncRef.current(), 3000);
     return () => clearInterval(poll);
-  }, [isRecording, replayActive]);
+  }, []);
+  useEffect(() => {
+    const p = listen("hotkey-fired", () => { syncRef.current(); });
+    return () => { p.then(f => f()); };
+  }, []);
 
   // Capture restarted underneath us (engine crash/respawn) — say so, unobtrusively.
   useEffect(() => {
@@ -169,16 +185,6 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
     return () => { p.then(f => f()); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Global hotkey refs ────────────────────────────────────────────────────
-  // Handlers are defined later in the file, so initialize refs with no-ops.
-  // They are updated on every render via the useEffect blocks below, so
-  // the listener callbacks always invoke the current handler with current state.
-  const handleStartRecordRef  = useRef<(cid?: string) => void>(() => {});
-  const handleStopRecordRef   = useRef<(cid?: string) => void>(() => {});
-  const handlePauseResumeRef  = useRef<(cid?: string) => void>(() => {});
-  const handleReplayToggleRef = useRef<(cid?: string) => void>(() => {});
-  const handleSaveReplayRef   = useRef<(cid?: string) => void>(() => {});
 
   const elapsedStr = useCallback((secs: number) => {
     const h = Math.floor(secs / 3600);
@@ -295,45 +301,6 @@ export function RecorderView({ settings, hwEncoder, onStatus, onSettingsChange }
       setReplayActive(false);
     } finally { setReplayBusy(false); }
   };
-
-  // ── Keep hotkey refs pointing at latest handlers (runs after every render) ─
-  // This is a synchronous assignment, not a useEffect, so refs are always
-  // current before any event handler could fire.
-  handleStartRecordRef.current  = handleStartRecord;
-  handleStopRecordRef.current   = handleStopRecord;
-  handlePauseResumeRef.current  = handlePauseResume;
-  handleReplayToggleRef.current = handleReplayToggle;
-  handleSaveReplayRef.current   = handleSaveReplay;
-
-  // ── Register hotkey listeners exactly once on mount ───────────────────────
-  useEffect(() => {
-    console.log("[hotkeys] Registering listeners...");
-    const events = [
-      "hotkey-start-recording",
-      "hotkey-stop-recording",
-      "hotkey-pause-recording",
-      "hotkey-replay-toggle",
-      "hotkey-replay-save",
-    ] as const;
-
-    // Payload carries the correlation id minted by the Rust hotkey hook.
-    const handlers: Record<string, (cid?: string) => void> = {
-      "hotkey-start-recording": (cid) => handleStartRecordRef.current(cid),
-      "hotkey-stop-recording":  (cid) => handleStopRecordRef.current(cid),
-      "hotkey-pause-recording": (cid) => handlePauseResumeRef.current(cid),
-      "hotkey-replay-toggle":   (cid) => handleReplayToggleRef.current(cid),
-      "hotkey-replay-save":     (cid) => handleSaveReplayRef.current(cid),
-    };
-
-    const promises = events.map(name =>
-      listen<{ cid?: string } | null>(name, (e) => handlers[name](e.payload?.cid))
-        .then(unlisten => { console.log(`[hotkeys] ✓ registered ${name}`); return unlisten; })
-        .catch(err => { console.error(`[hotkeys] ✗ FAILED to register ${name}:`, err); return () => {}; })
-    );
-
-    return () => { promises.forEach(p => p.then(f => f())); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
