@@ -290,3 +290,80 @@ fn reset_held_resyncs_without_firing() {
     m.reset_held([vk(VK_LCONTROL), vk(VK_LMENU)]);
     assert_eq!(m.on_event(RawEvent::Up(vk(VK_LMENU))), None);
 }
+
+#[test]
+fn modifier_only_not_fired_after_longer_chord_any_order() {
+    let orders: [&[&str]; 3] = [&["Ctrl", "Alt", "K"], &["Ctrl", "K", "Alt"], &["K", "Ctrl", "Alt"]];
+    for order in orders {
+        let mut m = Matcher::new(vec![("mo".into(), c("Ctrl+Alt")), ("long".into(), c("Ctrl+Alt+K"))]);
+        let fired: Vec<String> = order.iter().filter_map(|k| m.on_event(down(k))).collect();
+        assert_eq!(fired, ["long"], "{order:?}");
+        for k in order.iter().rev() {
+            assert_eq!(m.on_event(up(k)), None, "{order:?}: release {k}");
+        }
+        // A clean Ctrl+Alt tap afterwards still fires.
+        m.on_event(down("Ctrl"));
+        m.on_event(down("Alt"));
+        assert_eq!(m.on_event(up("Alt")), Some("mo".into()), "{order:?}: clean tap");
+        m.on_event(up("Ctrl"));
+    }
+}
+
+#[test]
+fn web_codes_map_to_inputs() {
+    let k = |code: &str| Input::from_web_code(code);
+    assert_eq!(k("KeyA"), Some(Input::Key(0x41)));
+    assert_eq!(k("KeyZ"), Some(Input::Key(0x5A)));
+    assert_eq!(k("Digit0"), Some(Input::Key(0x30)));
+    assert_eq!(k("Digit9"), Some(Input::Key(0x39)));
+    assert_eq!(k("F1"), Some(Input::Key(0x70)));
+    assert_eq!(k("F12"), Some(Input::Key(0x7B)));
+    assert_eq!(k("F24"), Some(Input::Key(0x87)));
+    assert_eq!(k("Numpad0"), Some(Input::Key(0x60)));
+    assert_eq!(k("Numpad9"), Some(Input::Key(0x69)));
+    assert_eq!(k("NumpadAdd"), Some(Input::Key(0x6B)));
+    assert_eq!(k("NumpadDecimal"), Some(Input::Key(0x6E)));
+    assert_eq!(k("NumpadEnter"), Some(Input::Key(0x0D)));
+    assert_eq!(k("Backquote"), Some(Input::Key(0xC0)));
+    assert_eq!(k("Minus"), Some(Input::Key(0xBD)));
+    assert_eq!(k("Equal"), Some(Input::Key(0xBB)));
+    assert_eq!(k("BracketLeft"), Some(Input::Key(0xDB)));
+    assert_eq!(k("Semicolon"), Some(Input::Key(0xBA)));
+    assert_eq!(k("Quote"), Some(Input::Key(0xDE)));
+    assert_eq!(k("Slash"), Some(Input::Key(0xBF)));
+    assert_eq!(k("IntlBackslash"), Some(Input::Key(0xE2)));
+    assert_eq!(k("Space"), Some(Input::Key(0x20)));
+    assert_eq!(k("Escape"), Some(Input::Key(0x1B)));
+    assert_eq!(k("ArrowUp"), Some(Input::Key(0x26)));
+    assert_eq!(k("PageDown"), Some(Input::Key(0x22)));
+    assert_eq!(k("PrintScreen"), Some(Input::Key(0x2C)));
+    assert_eq!(k("ContextMenu"), Some(Input::Key(0x5D)));
+    assert_eq!(k("MediaPlayPause"), Some(Input::Key(0xB3)));
+    assert_eq!(k("AudioVolumeUp"), Some(Input::Key(0xAF)));
+    assert_eq!(k("ControlLeft"), Some(Input::Key(VK_LCONTROL)));
+    assert_eq!(k("ControlRight"), Some(Input::Key(VK_RCONTROL)));
+    assert_eq!(k("ShiftLeft"), Some(Input::Key(VK_LSHIFT)));
+    assert_eq!(k("ShiftRight"), Some(Input::Key(VK_RSHIFT)));
+    assert_eq!(k("AltLeft"), Some(Input::Key(VK_LMENU)));
+    assert_eq!(k("AltRight"), Some(Input::Key(VK_RMENU)));
+    assert_eq!(k("MetaLeft"), Some(Input::Key(VK_LWIN)));
+    assert_eq!(k("MetaRight"), Some(Input::Key(VK_RWIN)));
+    assert_eq!(k("OSLeft"), Some(Input::Key(VK_LWIN)));
+    for bad in ["", "keya", "Key", "KeyAB", "Digit", "F0", "F25", "F01", "Numpad10", "Unidentified", "Ctrl", "Mouse4", "Menu"] {
+        assert_eq!(k(bad), None, "{bad:?}");
+    }
+    // Chords built from web codes match the hook's canonical form.
+    let chord = Chord::from_inputs(["ControlRight", "AltLeft", "F12"].iter().filter_map(|c| Input::from_web_code(c)));
+    assert_eq!(chord.to_canonical(), "Ctrl+Alt+F12");
+    assert_eq!(chord, c("CommandOrControl+Alt+F12"));
+}
+
+#[test]
+fn registerable_needs_ctrl_alt_or_win() {
+    for s in ["Ctrl+F2", "Alt+F9", "Win+K", "Ctrl+Shift+A", "Ctrl+Alt+F12", "CommandOrControl+Backquote", "CommandOrControl+1"] {
+        assert!(registerable(&c(s)), "{s}");
+    }
+    for s in ["F2", "Shift+F2", "K", "Mouse4", "Ctrl+Mouse4", "Ctrl+Alt", "Ctrl+A+B", "Shift"] {
+        assert!(!registerable(&c(s)), "{s}");
+    }
+}

@@ -59,6 +59,28 @@ impl Input {
         matches!(self, Input::Key(vk) if modifier_rank(*vk).is_some())
     }
 
+    /// The input for a DOM `KeyboardEvent.code` (layout-independent physical
+    /// key), for chords recorded by the WebView. Left/right modifiers keep
+    /// their side (like the hook's raw events); [`Chord::from_inputs`]
+    /// normalises them. `None` for codes with no binding.
+    pub fn from_web_code(code: &str) -> Option<Input> {
+        let vk = match code {
+            "ControlLeft" => VK_LCONTROL,
+            "ControlRight" => VK_RCONTROL,
+            "ShiftLeft" => VK_LSHIFT,
+            "ShiftRight" => VK_RSHIFT,
+            "AltLeft" => VK_LMENU,
+            "AltRight" => VK_RMENU,
+            "MetaLeft" | "OSLeft" => VK_LWIN,
+            "MetaRight" | "OSRight" => VK_RWIN,
+            "NumpadEnter" => 0x0D,
+            "ContextMenu" => 0x5D,
+            "IntlBackslash" => 0xE2,
+            _ => return web_code_plain(code).map(Input::Key),
+        };
+        Some(Input::Key(vk))
+    }
+
     fn normalized(self) -> Input {
         match self {
             Input::Key(vk) => Input::Key(normalize_vk(vk)),
@@ -228,6 +250,32 @@ fn parse_plain_key(upper: &str) -> Option<u32> {
         .or_else(|| ALIASES.iter().find(|(a, _)| *a == upper).map(|a| a.1))
 }
 
+/// Non-modifier `KeyboardEvent.code` values: `KeyA`, `Digit1`, `F1`-`F24`,
+/// `Numpad0`-`Numpad9`, and the [`KEYS`] names (which follow the DOM spelling).
+fn web_code_plain(code: &str) -> Option<u32> {
+    let single = |rest: &str, ok: fn(&u8) -> bool| {
+        let b = rest.as_bytes();
+        (b.len() == 1 && ok(&b[0])).then(|| b[0] as u32)
+    };
+    if let Some(r) = code.strip_prefix("Key") {
+        return single(r, u8::is_ascii_uppercase);
+    }
+    if let Some(r) = code.strip_prefix("Digit") {
+        return single(r, u8::is_ascii_digit);
+    }
+    if let Some(r) = code.strip_prefix("Numpad").and_then(|r| single(r, u8::is_ascii_digit)) {
+        return Some(0x60 + r - b'0' as u32);
+    }
+    if let Some(d) = code.strip_prefix('F') {
+        if !d.is_empty() && !d.starts_with('0') && d.bytes().all(|c| c.is_ascii_digit()) {
+            return d.parse::<u32>().ok().filter(|n| (1..=24).contains(n)).map(|n| 0x6F + n);
+        }
+        return None;
+    }
+    // "Menu" is our name for VK_APPS; the DOM calls it "ContextMenu".
+    KEYS.iter().find(|k| k.0 == code && k.0 != "Menu").map(|k| k.1)
+}
+
 fn parse_token(tok: &str) -> Result<Input, String> {
     let upper = tok.trim().to_uppercase();
     if upper.is_empty() {
@@ -362,6 +410,14 @@ impl Chord {
         }
         main.map(|vk| (mods, vk))
     }
+}
+
+/// Whether `RegisterHotKey` may take this chord: it has a
+/// [`Chord::registerhotkey_form`] and includes Ctrl, Alt or Win. Bare keys and
+/// Shift-only chords would steal ordinary typing system-wide, so they stay
+/// hook-only.
+pub fn registerable(chord: &Chord) -> bool {
+    matches!(chord.registerhotkey_form(), Some((mods, _)) if mods & (MOD_CONTROL | MOD_ALT | MOD_WIN) != 0)
 }
 
 /// One event from the low-level hooks. `Down`/`Up` carry the raw VK (left and
@@ -527,6 +583,15 @@ impl Matcher {
                 let len = b.chord.len();
                 if best.map_or(true, |(l, _)| len > l) {
                     best = Some((len, idx));
+                }
+            }
+        }
+        if best.is_some() {
+            // A longer chord fired: its modifiers must not also fire a
+            // modifier-only chord on release (Ctrl, K, Alt with Ctrl+Alt+K).
+            for b in &mut self.bindings {
+                if b.chord.is_modifier_only() {
+                    b.flag = false;
                 }
             }
         }
