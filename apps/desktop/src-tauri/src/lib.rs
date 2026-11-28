@@ -6,6 +6,7 @@ mod library;
 mod settings;
 mod tray;
 mod hotkey_listener;
+mod hotkey_actions;
 mod test_mode;
 
 use std::sync::Mutex;
@@ -65,6 +66,8 @@ pub fn run() {
             commands::generate_thumbnail,
             commands::get_debug_state,
             commands::simulate_hotkey,
+            commands::begin_hotkey_capture,
+            commands::cancel_hotkey_capture,
         ])
         .setup(|app| {
             library::init_db().expect("Failed to initialize database");
@@ -74,7 +77,8 @@ pub fn run() {
 
             tray::setup_tray(app)?;
 
-            // Start hotkey listener with global-hotkey crate
+            // Hotkeys: input thread (hooks + RegisterHotKey) feeding a
+            // dispatcher that runs the actions in Rust (hotkey_listener.rs).
             let listener = hotkey_listener::HotkeyListener::start(
                 app.handle().clone(),
                 settings.hotkeys.clone(),
@@ -121,26 +125,20 @@ pub fn run() {
         });
 }
 
-/// Re-register all hotkeys using the new global-hotkey listener.
-/// This replaces the old Tauri plugin-based approach.
+/// Replace the hotkey listener with one for `hotkeys`. The old listener is
+/// fully stopped first (hooks removed, `RegisterHotKey` ids unregistered,
+/// threads joined), so hooks are never doubled and no stale registration is
+/// left behind.
 pub fn reregister_hotkeys(
     app:     &tauri::AppHandle,
     hotkeys: &std::collections::HashMap<String, String>,
 ) {
-    // Stop the old listener if it exists
-    if let Ok(mut handle) = app.state::<HotkeyListenerHandle>().0.lock() {
-        if let Some(listener) = handle.take() {
-            listener.stop_and_wait();
-        }
+    let handle = app.state::<HotkeyListenerHandle>();
+    // Take it out under the lock; stop it with the lock released.
+    let old = handle.0.lock().unwrap().take();
+    if let Some(listener) = old {
+        listener.stop_and_wait();
     }
-
-    // Start a new listener with the updated hotkeys
-    let listener = hotkey_listener::HotkeyListener::start(
-        app.clone(),
-        hotkeys.clone(),
-    );
-
-    if let Ok(mut handle) = app.state::<HotkeyListenerHandle>().0.lock() {
-        *handle = Some(listener);
-    }
+    let listener = hotkey_listener::HotkeyListener::start(app.clone(), hotkeys.clone());
+    *handle.0.lock().unwrap() = Some(listener);
 }

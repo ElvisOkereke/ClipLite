@@ -230,7 +230,7 @@ async fn request_ok(client: &Arc<EngineClient>, cmd: Command, cid: &str, timeout
     }
 }
 
-fn settings_of(app: &AppHandle) -> Settings {
+pub(crate) fn settings_of(app: &AppHandle) -> Settings {
     app.state::<SettingsState>().0.lock().unwrap().clone()
 }
 
@@ -413,19 +413,25 @@ pub async fn start_recording(
     let cid = received("start_recording", cid);
     let _ = (&region, &enc_cfg);
     adopt_ui_selection(&app, &audio_cfg);
-    let output = settings_of(&app).build_output_path(".mp4").to_string_lossy().into_owned();
+    start_recording_core(&app, &cid).await
+}
 
-    let client = ensure_client(&app)?;
-    ensure_engine(&app, &client, &cid, false).await?;
-    let res = request_ok(&client, Command::StartRecording { output_path: output }, &cid, CONTROL_TIMEOUT).await;
+/// Start a recording (engine configured from Settings). Shared by the
+/// `start_recording` command and the hotkey dispatcher.
+pub(crate) async fn start_recording_core(app: &AppHandle, cid: &str) -> Result<String, String> {
+    let output = settings_of(app).build_output_path(".mp4").to_string_lossy().into_owned();
+
+    let client = ensure_client(app)?;
+    ensure_engine(app, &client, cid, false).await?;
+    let res = request_ok(&client, Command::StartRecording { output_path: output }, cid, CONTROL_TIMEOUT).await;
     match res {
         Ok(Event::RecordingStarted { path }) => {
             app.state::<RecorderState>().0.lock().unwrap().recording_path = Some(path.clone());
-            tray::set_recording_state(&app, true);
+            tray::set_recording_state(app, true);
             Ok(path)
         }
         other => {
-            stop_engine_if_idle(&app, &client, &cid).await;
+            stop_engine_if_idle(app, &client, cid).await;
             Err(match other {
                 Err(e) => e,
                 Ok(ev) => format!("unexpected reply to start_recording: {ev:?}"),
@@ -437,43 +443,63 @@ pub async fn start_recording(
 #[tauri::command]
 pub async fn stop_recording(app: AppHandle, cid: Option<String>) -> Result<String, String> {
     let cid = received("stop_recording", cid);
-    let Some(client) = live_client(&app) else {
-        recording_finished(&app, None);
+    stop_recording_core(&app, &cid).await
+}
+
+/// Stop the recording. Shared by `stop_recording` and the hotkey dispatcher.
+pub(crate) async fn stop_recording_core(app: &AppHandle, cid: &str) -> Result<String, String> {
+    let Some(client) = live_client(app) else {
+        recording_finished(app, None);
         return Ok(String::new());
     };
-    let out = match request(&client, Command::StopRecording, &cid, STOP_RECORDING_TIMEOUT).await? {
+    let out = match request(&client, Command::StopRecording, cid, STOP_RECORDING_TIMEOUT).await? {
         Event::RecordingStopped { path } => {
-            recording_finished(&app, Some(&path));
+            recording_finished(app, Some(&path));
             Ok(path)
         }
         // e.g. "not recording", or a failed remux ("…; segments kept at <path>")
         Event::Error { message } => {
-            recording_finished(&app, None);
+            recording_finished(app, None);
             Err(message)
         }
         other => Err(format!("unexpected reply to stop_recording: {other:?}")),
     };
-    stop_engine_if_idle(&app, &client, &cid).await;
+    stop_engine_if_idle(app, &client, cid).await;
     out
 }
 
-async fn pause_or_resume(app: AppHandle, cmd: Command, cid: String) -> Result<(), String> {
-    let client = live_client(&app).ok_or("Not recording")?;
-    let ev = request_ok(&client, cmd, &cid, CONTROL_TIMEOUT).await?;
-    remember_status(&app, &ev);
+async fn pause_or_resume(app: &AppHandle, cmd: Command, cid: &str) -> Result<(), String> {
+    let client = live_client(app).ok_or("Not recording")?;
+    let ev = request_ok(&client, cmd, cid, CONTROL_TIMEOUT).await?;
+    remember_status(app, &ev);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn pause_recording(app: AppHandle, cid: Option<String>) -> Result<(), String> {
     let cid = received("pause_recording", cid);
-    pause_or_resume(app, Command::Pause, cid).await
+    pause_or_resume(&app, Command::Pause, &cid).await
 }
 
 #[tauri::command]
 pub async fn resume_recording(app: AppHandle, cid: Option<String>) -> Result<(), String> {
     let cid = received("resume_recording", cid);
-    pause_or_resume(app, Command::Resume, cid).await
+    pause_or_resume(&app, Command::Resume, &cid).await
+}
+
+/// Pause a running recording, or resume a paused one, based on the engine's
+/// current status (hotkey `pause`).
+pub(crate) async fn toggle_pause(app: &AppHandle, cid: &str) -> Result<(), String> {
+    let client = live_client(app).ok_or("Not recording")?;
+    let ev = request_ok(&client, Command::Status, cid, STATUS_TIMEOUT).await?;
+    let paused = match &ev {
+        Event::Status { recording: true, paused, .. } => *paused,
+        Event::Status { .. } => return Err("Not recording".into()),
+        other => return Err(format!("unexpected reply to status: {other:?}")),
+    };
+    remember_status(app, &ev);
+    let cmd = if paused { Command::Resume } else { Command::Pause };
+    pause_or_resume(app, cmd, cid).await
 }
 
 /// Engine status; short timeout, falling back to the last known status.
@@ -547,18 +573,23 @@ pub async fn apply_capture_settings(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn stop_replay(app: AppHandle, cid: Option<String>) -> Result<(), String> {
     let cid = received("stop_replay", cid);
+    stop_replay_core(&app, &cid).await
+}
+
+/// Stop the buffer. Shared by `stop_replay` and the hotkey dispatcher.
+pub(crate) async fn stop_replay_core(app: &AppHandle, cid: &str) -> Result<(), String> {
     let recording = {
         let state = app.state::<RecorderState>();
         let mut rec = state.0.lock().unwrap();
         rec.buffer_on = false;
         rec.recording_path.is_some()
     };
-    tray::set_replay_state(&app, None);
+    tray::set_replay_state(app, None);
     if recording {
         return Ok(());
     }
-    let Some(client) = live_client(&app) else { return Ok(()) };
-    match request_ok(&client, Command::StopEngine, &cid, CONTROL_TIMEOUT).await {
+    let Some(client) = live_client(app) else { return Ok(()) };
+    match request_ok(&client, Command::StopEngine, cid, CONTROL_TIMEOUT).await {
         Ok(_) => Ok(()),
         Err(e) if e == "engine not running" => Ok(()),
         Err(e) => Err(e),
@@ -568,16 +599,32 @@ pub async fn stop_replay(app: AppHandle, cid: Option<String>) -> Result<(), Stri
 #[tauri::command]
 pub async fn save_replay(app: AppHandle, secs: u32, cid: Option<String>) -> Result<String, String> {
     let cid = received("save_replay", cid);
+    save_replay_core(&app, secs, &cid).await
+}
+
+/// Turn the replay buffer off if it is on, else on (hotkey `replay_toggle`).
+pub(crate) async fn replay_toggle(app: &AppHandle, cid: &str) -> Result<(), String> {
+    let on = app.state::<RecorderState>().0.lock().unwrap().buffer_on;
+    if on {
+        stop_replay_core(app, cid).await
+    } else {
+        start_buffer(app, cid).await.map(drop)
+    }
+}
+
+/// Save the last `secs` of the buffer. Shared by `save_replay` and the hotkey
+/// dispatcher (which passes Settings' buffer length, as the UI does).
+pub(crate) async fn save_replay_core(app: &AppHandle, secs: u32, cid: &str) -> Result<String, String> {
     let buffer_on = app.state::<RecorderState>().0.lock().unwrap().buffer_on;
     if !buffer_on {
         return Err(BUFFER_INACTIVE.into());
     }
-    let client = live_client(&app).ok_or(BUFFER_INACTIVE)?;
-    let output = settings_of(&app).build_replay_output_path(".mp4").to_string_lossy().into_owned();
+    let client = live_client(app).ok_or(BUFFER_INACTIVE)?;
+    let output = settings_of(app).build_replay_output_path(".mp4").to_string_lossy().into_owned();
     let timeout = Duration::from_secs(u64::from(secs)) + SAVE_EXTRA;
-    match request_ok(&client, Command::SaveReplay { secs, output_path: output }, &cid, timeout).await? {
+    match request_ok(&client, Command::SaveReplay { secs, output_path: output }, cid, timeout).await? {
         Event::ReplaySaved { path, .. } => {
-            replay_saved(&app, &path);
+            replay_saved(app, &path);
             Ok(path)
         }
         other => Err(format!("unexpected reply to save_replay: {other:?}")),
@@ -831,28 +878,53 @@ pub fn get_debug_state(
 ) -> serde_json::Value {
     let hotkeys = settings.0.lock().unwrap().hotkeys.clone();
     let is_recording = recorder.0.lock().unwrap().recording_path.is_some();
-    let listener_alive = hotkey_handle.0.lock().unwrap().is_some();
-    
+    let hotkey_status = hotkey_handle.0.lock().unwrap().as_ref().map(|l| l.status());
+    let listener_alive = hotkey_status.is_some();
+
     serde_json::json!({
         "hotkeys": hotkeys,
         "listener_alive": listener_alive,
+        "hotkey_status": hotkey_status,
         "is_recording": is_recording,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     })
 }
 
-/// Simulate a hotkey event directly (useful for testing).
-/// Bypasses the OS hotkey system entirely, goes straight to the event emitter.
+/// Run a hotkey action as if its chord was pressed (debug panel / tests).
+/// Goes through the listener's dispatcher, so the action runs in Rust and
+/// `hotkey-fired` is emitted exactly as for a real press. Accepts action
+/// names (`start`, `replay_save`, ...) and the legacy event suffixes
+/// (`start-recording`, ...).
 #[tauri::command]
-pub fn simulate_hotkey(app: AppHandle, action: String) -> Result<(), String> {
-    let event = format!("hotkey-{action}");
-    log::info!("[debug] Simulating hotkey event: {event}");
-    // Target the main window directly — same path as the real hotkey listener.
-    if let Some(win) = app.get_webview_window("main") {
-        win.emit(&event, ()).map_err(|e| e.to_string())
-    } else {
-        app.emit(&event, ()).map_err(|e| e.to_string())
+pub fn simulate_hotkey(
+    action: String,
+    hotkey_handle: State<'_, crate::HotkeyListenerHandle>,
+) -> Result<(), String> {
+    let action = crate::hotkey_actions::Action::from_any(&action)?;
+    log::info!("[debug] simulating hotkey action {}", action.as_str());
+    with_listener(&hotkey_handle, |l| l.simulate(action))
+}
+
+fn with_listener(
+    handle: &crate::HotkeyListenerHandle,
+    f: impl FnOnce(&crate::hotkey_listener::HotkeyListener) -> Result<(), String>,
+) -> Result<(), String> {
+    match handle.0.lock().unwrap().as_ref() {
+        Some(l) => f(l),
+        None => Err("hotkey listener is not running".into()),
     }
+}
+
+/// Start recording a chord for the settings UI. The matcher is paused until
+/// the capture ends; progress arrives as `hotkey-capture` events.
+#[tauri::command]
+pub fn begin_hotkey_capture(hotkey_handle: State<'_, crate::HotkeyListenerHandle>) -> Result<(), String> {
+    with_listener(&hotkey_handle, |l| l.begin_capture())
+}
+
+#[tauri::command]
+pub fn cancel_hotkey_capture(hotkey_handle: State<'_, crate::HotkeyListenerHandle>) -> Result<(), String> {
+    with_listener(&hotkey_handle, |l| l.cancel_capture())
 }
 
 

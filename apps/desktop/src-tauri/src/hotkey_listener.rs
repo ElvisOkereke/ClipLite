@@ -1,314 +1,734 @@
-/// Global hotkey listener using WH_KEYBOARD_LL (low-level keyboard hook).
-///
-/// WHY NOT RegisterHotKey / global-hotkey crate:
-///   RegisterHotKey is blocked by DirectX fullscreen-exclusive (FSE) games —
-///   the game owns keyboard focus and the OS never delivers WM_HOTKEY to
-///   background windows. This is a known Windows limitation.
-///
-/// WHY WH_KEYBOARD_LL WORKS IN GAMES:
-///   SetWindowsHookEx(WH_KEYBOARD_LL) installs a hook in the kernel's input
-///   pipeline *before* messages are dispatched to any window. It fires even
-///   when a DirectX FSE game has exclusive focus, making it the correct API
-///   for screen-recording hotkeys that must work during gameplay.
-
+//! Global hotkeys: one input thread feeds one dispatcher thread, and actions
+//! run in Rust (see `hotkey_actions`), never in the WebView.
+//!
+//! Input thread (Windows): owns a message pump, a message-only window and two
+//! low-level hooks.
+//! - `WH_KEYBOARD_LL` + `WH_MOUSE_LL`: the callbacks only translate the event
+//!   into a [`RawEvent`], `try_send` it to the dispatcher and call
+//!   `CallNextHookEx`. No logging, no locks, no IPC. LL hooks also see input
+//!   while a fullscreen game has focus.
+//! - `RegisterHotKey(hwnd, id, mods | MOD_NOREPEAT, vk)` for every binding that
+//!   has a `registerhotkey_form`: a second, independent path (`WM_HOTKEY`) for
+//!   when Windows silently drops the hooks (callback timeout, sleep, UAC).
+//! - Watchdog: both hooks are unhooked and reinstalled every 60 s, and after
+//!   resume from sleep / session unlock, on this thread (a posted thread
+//!   message or `WM_TIMER`), so the message pump stays the owner.
+//!
+//! Dispatcher thread: runs the [`Matcher`] (or [`Capture`] while the settings
+//! UI records a chord), de-duplicates the two paths ([`Dedup`]), logs
+//! `hotkey.pressed` / `hotkey.dispatched`, and runs the action on the tauri
+//! async runtime. It emits `hotkey-fired` after the action ran.
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
-    thread,
+    sync::{
+        mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+        Arc, Mutex,
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager};
 
-pub struct HotkeyListener {
-    stop_flag: Arc<AtomicBool>,
+use cliplite_core::hotkey::{find_conflicts, parse_bindings, Capture, CaptureState, Chord, Input, Matcher, RawEvent};
+use cliplite_core::telemetry::{new_cid, Stage};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+use crate::hotkey_actions::{self, Action};
+
+/// Hook events queued for the dispatcher before the hook starts dropping them.
+const CHANNEL_CAPACITY: usize = 4096;
+/// The hook and `WM_HOTKEY` report the same press within this window.
+const DEDUP_WINDOW: Duration = Duration::from_millis(250);
+#[cfg(windows)]
+const WATCHDOG_INTERVAL_MS: u32 = 60_000;
+
+// ── Pure parts ────────────────────────────────────────────────────────────────
+
+/// Which path reported a press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    Hook,
+    Register,
 }
 
-#[derive(Debug, Clone)]
-struct ParsedHotkey {
-    vk:    u32,   // Virtual-key code
-    ctrl:  bool,
-    shift: bool,
-    alt:   bool,
-    event: String,
+/// One press arrives once from the hook and once as `WM_HOTKEY`; run it once.
+/// A second event from the *other* source within [`DEDUP_WINDOW`] is that
+/// press's twin and is dropped (once). Events from the same source are always
+/// separate presses.
+#[derive(Debug, Default)]
+pub struct Dedup {
+    /// action -> (source, time, twin already dropped)
+    last: HashMap<String, (Source, Instant, bool)>,
+}
+
+impl Dedup {
+    pub fn should_run(&mut self, action: &str, source: Source, now: Instant) -> bool {
+        if let Some((src, t, paired)) = self.last.get_mut(action) {
+            if *src != source && !*paired && now.saturating_duration_since(*t) < DEDUP_WINDOW {
+                *paired = true;
+                return false;
+            }
+        }
+        self.last.insert(action.to_string(), (source, now, false));
+        true
+    }
+}
+
+/// Per-binding health, shown by `get_debug_state` (`hotkey_status.bindings`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BindingStatus {
+    pub action: String,
+    /// The saved string.
+    pub binding: String,
+    pub parsed: bool,
+    /// Parse error.
+    pub error: Option<String>,
+    pub canonical: Option<String>,
+    pub display: Option<String>,
+    /// `None`: not expressible as `RegisterHotKey` (mouse, modifier-only, two
+    /// keys) or not attempted yet.
+    pub registered: Option<bool>,
+    /// Why `RegisterHotKey` failed (usually: another app owns the combo).
+    pub register_error: Option<String>,
+}
+
+/// A binding to pass to `RegisterHotKey`; `id` is the `WM_HOTKEY` wParam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisterSpec {
+    pub id: i32,
+    pub action: String,
+    pub mods: u32,
+    pub vk: u32,
+}
+
+pub struct Bindings {
+    /// Parsed bindings of known actions, for the matcher.
+    pub active: Vec<(String, Chord)>,
+    pub status: Vec<BindingStatus>,
+    pub register: Vec<RegisterSpec>,
+}
+
+/// Turn `Settings::hotkeys` into matcher bindings. Empty strings are unbound;
+/// unknown actions (e.g. `annotate`, which has no action) are skipped with a
+/// debug log; strings that fail to parse are logged and skipped. Never fails.
+pub fn build_bindings(map: &HashMap<String, String>) -> Bindings {
+    let known = map
+        .iter()
+        .filter(|(action, _)| match action.parse::<Action>() {
+            Ok(_) => true,
+            Err(_) => {
+                log::debug!("[hotkeys] no action named {action:?}; binding ignored");
+                false
+            }
+        })
+        .map(|(a, s)| (a.clone(), s.clone()));
+    let (active, errors) = parse_bindings(known);
+
+    let mut status = Vec::new();
+    let mut register = Vec::new();
+    for (action, chord) in &active {
+        let form = chord.registerhotkey_form();
+        if let Some((mods, vk)) = form {
+            register.push(RegisterSpec { id: register.len() as i32 + 1, action: action.clone(), mods, vk });
+        }
+        status.push(BindingStatus {
+            action: action.clone(),
+            binding: map[action].clone(),
+            parsed: true,
+            error: None,
+            canonical: Some(chord.to_canonical()),
+            display: Some(chord.display()),
+            registered: None,
+            register_error: None,
+        });
+    }
+    for (action, error) in errors {
+        log::warn!("[hotkeys] {action}: cannot parse {error}; binding skipped");
+        status.push(BindingStatus {
+            action: action.clone(),
+            binding: map[&action].clone(),
+            parsed: false,
+            error: Some(error),
+            canonical: None,
+            display: None,
+            registered: None,
+            register_error: None,
+        });
+    }
+    status.sort_by(|a, b| a.action.cmp(&b.action));
+    for (a, b) in find_conflicts(&active) {
+        log::warn!("[hotkeys] {a} and {b} have the same chord; only one will fire");
+    }
+    Bindings { active, status, register }
+}
+
+// ── Shared state ──────────────────────────────────────────────────────────────
+
+/// Listener health (`get_debug_state().hotkey_status`). Written by the input
+/// and dispatcher threads (never by a hook callback).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HotkeyStatus {
+    pub bindings: Vec<BindingStatus>,
+    pub keyboard_hook: bool,
+    pub mouse_hook: bool,
+    pub hook_error: Option<String>,
+    /// Local time of the last (re)install of the hooks.
+    pub last_hook_install: Option<String>,
+    pub hook_installs: u32,
+    pub capturing: bool,
+}
+
+/// Messages to the dispatcher thread.
+#[derive(Debug)]
+pub(crate) enum Msg {
+    /// From a hook callback.
+    Raw(RawEvent),
+    /// `WM_HOTKEY` for this action.
+    Registered(String),
+    /// Hooks reinstalled; these raw inputs are held according to the OS.
+    Resync(Vec<Input>),
+    Simulate(Action),
+    BeginCapture,
+    CancelCapture,
+    Stop,
+}
+
+// ── Listener ──────────────────────────────────────────────────────────────────
+
+pub struct HotkeyListener {
+    tx: SyncSender<Msg>,
+    status: Arc<Mutex<HotkeyStatus>>,
+    /// Input thread id (0 if it failed to start / non-Windows).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    input_tid: u32,
+    input: Mutex<Option<JoinHandle<()>>>,
+    dispatcher: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl HotkeyListener {
-    pub fn start(app: AppHandle, hotkeys: HashMap<String, String>) -> Self {
-        let stop_flag  = Arc::new(AtomicBool::new(false));
-        let stop_clone = stop_flag.clone();
-
-        thread::spawn(move || {
-            #[cfg(windows)]
-            run_hook_thread(app, hotkeys, stop_clone);
-
-            #[cfg(not(windows))]
-            {
-                let _ = (app, hotkeys);
-                while !stop_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
+    pub fn start(app: AppHandle, bindings: HashMap<String, String>) -> Self {
+        let b = build_bindings(&bindings);
+        for s in &b.status {
+            if s.parsed {
+                log::info!("[hotkeys] {} = {}", s.action, s.canonical.as_deref().unwrap_or_default());
             }
+        }
+        let status = Arc::new(Mutex::new(HotkeyStatus { bindings: b.status.clone(), ..Default::default() }));
+        let (tx, rx) = sync_channel(CHANNEL_CAPACITY);
 
-            log::info!("[hotkeys] Listener thread exited");
-        });
+        let dispatcher = {
+            let (app, status, active) = (app.clone(), status.clone(), b.active.clone());
+            std::thread::Builder::new()
+                .name("hotkey-dispatch".into())
+                .spawn(move || dispatch_loop(app, rx, active, status))
+                .map_err(|e| log::error!("[hotkeys] dispatcher thread failed to start: {e}"))
+                .ok()
+        };
 
-        Self { stop_flag }
+        #[cfg(windows)]
+        let (input, input_tid) = win::spawn_input_thread(tx.clone(), b.register, status.clone());
+        #[cfg(not(windows))]
+        let (input, input_tid) = {
+            let _ = b.register;
+            (None, 0)
+        };
+
+        Self { tx, status, input_tid, input: Mutex::new(input), dispatcher: Mutex::new(dispatcher) }
     }
 
-    pub fn stop(&self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-    }
-
+    /// Stop both threads and wait for them: hooks unhooked, hotkeys
+    /// unregistered and the window destroyed before this returns. Idempotent.
     pub fn stop_and_wait(&self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-}
-
-// ── Windows implementation ─────────────────────────────────────────────────────
-
-#[cfg(windows)]
-fn run_hook_thread(
-    app:       AppHandle,
-    hotkeys:   HashMap<String, String>,
-    stop_flag: Arc<AtomicBool>,
-) {
-    use windows::Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
-        UI::WindowsAndMessaging::{
-            CallNextHookEx, GetMessageW, PostThreadMessageW,
-            SetWindowsHookExW, UnhookWindowsHookEx,
-            HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WM_QUIT,
-        },
-        System::Threading::GetCurrentThreadId,
-    };
-
-    // ── Map action names to Tauri event names ─────────────────────────
-    let action_events: HashMap<&str, &str> = [
-        ("start",         "hotkey-start-recording"),
-        ("stop",          "hotkey-stop-recording"),
-        ("pause",         "hotkey-pause-recording"),
-        ("library",       "hotkey-open-library"),
-        ("replay_toggle", "hotkey-replay-toggle"),
-        ("replay_save",   "hotkey-replay-save"),
-    ].into_iter().collect();
-
-    // ── Parse hotkey strings ──────────────────────────────────────────
-    let mut parsed: Vec<ParsedHotkey> = Vec::new();
-    for (action, key_str) in &hotkeys {
-        if key_str.is_empty() { continue; }
-        let Some(&event_name) = action_events.get(action.as_str()) else { continue };
-        match parse_hotkey_to_vk(key_str) {
-            Some((vk, ctrl, shift, alt)) => {
-                log::info!("[hotkeys] OK  {key_str} → {event_name} (vk=0x{vk:02X} C={ctrl} S={shift} A={alt})");
-                parsed.push(ParsedHotkey { vk, ctrl, shift, alt, event: event_name.to_string() });
+        if let Some(h) = self.input.lock().unwrap().take() {
+            #[cfg(windows)]
+            win::post_quit(self.input_tid);
+            if h.join().is_err() {
+                log::error!("[hotkeys] input thread panicked");
             }
-            None => log::warn!("[hotkeys] SKIP {key_str} — could not parse"),
+        }
+        if let Some(h) = self.dispatcher.lock().unwrap().take() {
+            // Blocking send: the dispatcher drains the queue, so this returns.
+            let _ = self.tx.send(Msg::Stop);
+            if h.join().is_err() {
+                log::error!("[hotkeys] dispatcher thread panicked");
+            }
         }
     }
 
-    if parsed.is_empty() {
-        log::warn!("[hotkeys] No valid hotkeys configured, hook not installed");
+    pub fn status(&self) -> HotkeyStatus {
+        self.status.lock().unwrap().clone()
+    }
+
+    fn send(&self, msg: Msg) -> Result<(), String> {
+        self.tx.try_send(msg).map_err(|e| format!("hotkey dispatcher unavailable: {e}"))
+    }
+
+    pub fn simulate(&self, action: Action) -> Result<(), String> {
+        self.send(Msg::Simulate(action))
+    }
+
+    pub fn begin_capture(&self) -> Result<(), String> {
+        self.send(Msg::BeginCapture)
+    }
+
+    pub fn cancel_capture(&self) -> Result<(), String> {
+        self.send(Msg::CancelCapture)
+    }
+}
+
+impl Drop for HotkeyListener {
+    fn drop(&mut self) {
+        self.stop_and_wait();
+    }
+}
+
+// ── Dispatcher ────────────────────────────────────────────────────────────────
+
+fn dispatch_loop(app: AppHandle, rx: Receiver<Msg>, active: Vec<(String, Chord)>, status: Arc<Mutex<HotkeyStatus>>) {
+    let displays: HashMap<String, String> = active.iter().map(|(a, c)| (a.clone(), c.display())).collect();
+    let mut matcher = Matcher::new(active);
+    let mut capture: Option<Capture> = None;
+    let mut last_holding: Option<Chord> = None;
+    let mut dedup = Dedup::default();
+    let set_capturing = |on: bool| status.lock().unwrap().capturing = on;
+
+    for msg in rx {
+        match msg {
+            Msg::Raw(ev) => match capture.as_mut() {
+                Some(cap) => match cap.on_event(ev) {
+                    CaptureState::Idle => {}
+                    // Only report changes (not key repeat, clicks or wheel).
+                    CaptureState::Holding(chord) => {
+                        if last_holding.as_ref() != Some(&chord) {
+                            emit_capture(&app, "holding", &chord);
+                            last_holding = Some(chord);
+                        }
+                    }
+                    CaptureState::Done(chord) => {
+                        emit_capture(&app, "done", &chord);
+                        capture = None;
+                        last_holding = None;
+                        matcher.reset();
+                        set_capturing(false);
+                    }
+                },
+                None => {
+                    if let Some(action) = matcher.on_event(ev) {
+                        fire(&app, &mut dedup, &displays, &action, Some(Source::Hook));
+                    }
+                }
+            },
+            Msg::Registered(action) => {
+                if capture.is_none() {
+                    fire(&app, &mut dedup, &displays, &action, Some(Source::Register));
+                }
+            }
+            Msg::Simulate(action) => fire(&app, &mut dedup, &displays, action.as_str(), None),
+            // A capture in progress is left alone: the user is holding its keys.
+            Msg::Resync(held) => matcher.reset_held(held),
+            Msg::BeginCapture => {
+                capture = Some(Capture::default());
+                last_holding = None;
+                set_capturing(true);
+            }
+            Msg::CancelCapture => {
+                if capture.take().is_some() {
+                    matcher.reset();
+                }
+                last_holding = None;
+                set_capturing(false);
+            }
+            Msg::Stop => break,
+        }
+    }
+    log::info!("[hotkeys] dispatcher exited");
+}
+
+fn emit_capture(app: &AppHandle, state: &str, chord: &Chord) {
+    let payload = serde_json::json!({ "state": state, "canonical": chord.to_canonical(), "display": chord.display() });
+    app.emit("hotkey-capture", payload).ok();
+}
+
+/// De-duplicate (`source` `None` = simulated, never de-duplicated), log, and
+/// run the action on the async runtime; emit `hotkey-fired` when it is done.
+fn fire(app: &AppHandle, dedup: &mut Dedup, displays: &HashMap<String, String>, name: &str, source: Option<Source>) {
+    let Ok(action) = name.parse::<Action>() else {
+        log::debug!("[hotkeys] no action named {name:?}");
         return;
+    };
+    if let Some(src) = source {
+        if !dedup.should_run(name, src, Instant::now()) {
+            log::debug!("[hotkeys] {name}: duplicate from {src:?} dropped");
+            return;
+        }
+    }
+    let cid = new_cid();
+    let chord_display = displays.get(name).cloned().unwrap_or_default();
+    let src = source.map_or("simulate", |s| match s {
+        Source::Hook => "hook",
+        Source::Register => "register",
+    });
+    tracing::info!(stage = Stage::HotkeyPressed.as_str(), cid = %cid, action = name, source = src,
+                   chord = %chord_display, "hotkey pressed");
+    // Logged before the task starts so the log order is pressed ->
+    // dispatched -> command.received (the HIL matrix sorts by timestamp).
+    tracing::info!(stage = Stage::HotkeyDispatched.as_str(), cid = %cid, action = name, "hotkey dispatched");
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let name = action.as_str();
+        let payload = match hotkey_actions::run(&app, action, &cid).await {
+            Ok(()) => {
+                tracing::info!(cid = %cid, action = name, "hotkey action done");
+                serde_json::json!({ "action": name, "cid": cid, "display": chord_display })
+            }
+            Err(error) => {
+                tracing::warn!(stage = Stage::Error.as_str(), cid = %cid, action = name, %error, "hotkey action failed");
+                serde_json::json!({ "action": name, "cid": cid, "error": error })
+            }
+        };
+        app.emit("hotkey-fired", payload).ok();
+    });
+}
+
+// ── Windows input thread ──────────────────────────────────────────────────────
+
+#[cfg(windows)]
+mod win {
+    use super::*;
+    use cliplite_core::hotkey::MouseButton;
+    use std::cell::RefCell;
+    use windows::core::w;
+    use windows::Win32::{
+        Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Power::{RegisterSuspendResumeNotification, UnregisterSuspendResumeNotification},
+            RemoteDesktop::{WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION},
+            Threading::GetCurrentThreadId,
+        },
+        UI::{
+            Input::KeyboardAndMouse::{GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT},
+            WindowsAndMessaging::*,
+        },
+    };
+
+    /// Posted to the input thread: reinstall both hooks.
+    const WM_APP_REINSTALL: u32 = WM_APP + 1;
+    const WATCHDOG_TIMER: usize = 1;
+
+    thread_local! {
+        /// The dispatcher channel for the hook callbacks. LL hook callbacks run
+        /// on the installing thread, so a thread-local needs no lock.
+        static HOOK_TX: RefCell<Option<SyncSender<Msg>>> = const { RefCell::new(None) };
     }
 
-    // ── Store hook data in a process-global static ────────────────────
-    // The LL hook callback is a bare `unsafe extern "system" fn` — it cannot
-    // capture a closure. We share state via a Mutex<Option<>> static.
-    // Safety: only one hook thread runs at a time (enforced by stop_and_wait
-    // before restart), so there is never concurrent mutation.
-    static HOOK_DATA: Mutex<Option<HookData>> = Mutex::new(None);
-
-    struct HookData {
-        hotkeys: Vec<ParsedHotkey>,
-        app:     AppHandle,
+    /// Hook callback side: never blocks (drops the event if the queue is full).
+    fn forward(ev: RawEvent) {
+        let _ = HOOK_TX.try_with(|tx| {
+            if let Ok(tx) = tx.try_borrow() {
+                if let Some(tx) = tx.as_ref() {
+                    let _ = tx.try_send(Msg::Raw(ev));
+                }
+            }
+        });
     }
-    // SAFETY: AppHandle is Send+Sync; storing it behind a Mutex is safe.
-    unsafe impl Send for HookData {}
-    unsafe impl Sync for HookData {}
 
-    *HOOK_DATA.lock().unwrap() = Some(HookData { hotkeys: parsed, app });
-
-    // ── The low-level keyboard hook callback ─────────────────────────
-    unsafe extern "system" fn keyboard_hook(
-        code:   i32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
-        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-
+    // Injected input (LLKHF_INJECTED / LLMHF_INJECTED) is accepted on purpose,
+    // in and out of test mode: the HIL kit injects, and so do macro tools
+    // people bind hotkeys to (Stream Deck, AutoHotkey, mouse software).
+    unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code >= 0 {
-            let msg_kind = wparam.0 as u32;
-            if msg_kind == WM_KEYDOWN || msg_kind == WM_SYSKEYDOWN {
-                let kb    = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-                let vk    = kb.vkCode;
-                let ctrl  = (GetAsyncKeyState(0x11) as u16) & 0x8000 != 0; // VK_CONTROL
-                let shift = (GetAsyncKeyState(0x10) as u16) & 0x8000 != 0; // VK_SHIFT
-                let alt   = (GetAsyncKeyState(0x12) as u16) & 0x8000 != 0; // VK_MENU
+            let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+            match wparam.0 as u32 {
+                WM_KEYDOWN | WM_SYSKEYDOWN => forward(RawEvent::Down(Input::Key(kb.vkCode))),
+                WM_KEYUP | WM_SYSKEYUP => forward(RawEvent::Up(Input::Key(kb.vkCode))),
+                _ => {}
+            }
+        }
+        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    }
 
-                if let Ok(guard) = HOOK_DATA.try_lock() {
-                    if let Some(data) = guard.as_ref() {
-                        for hk in &data.hotkeys {
-                            if hk.vk == vk
-                                && hk.ctrl  == ctrl
-                                && hk.shift == shift
-                                && hk.alt   == alt
-                            {
-                                // NOTE: logging and emitting inside the hook callback is the
-                                // pre-existing design (fixed in WS1); kept for the baseline.
-                                use cliplite_core::telemetry::{new_cid, Stage};
-                                let cid = new_cid();
-                                tracing::info!(stage = Stage::HotkeyPressed.as_str(), cid = %cid,
-                                               event = %hk.event, "hotkey pressed");
-                                let payload = serde_json::json!({ "cid": cid });
-                                let emitted = if let Some(win) = data.app.get_webview_window("main") {
-                                    win.emit(&hk.event, payload)
-                                } else {
-                                    data.app.emit(&hk.event, payload)
-                                };
-                                match emitted {
-                                    Ok(()) => tracing::info!(stage = Stage::HotkeyDispatched.as_str(),
-                                                             cid = %cid, event = %hk.event, "hotkey dispatched"),
-                                    Err(e) => tracing::error!(stage = Stage::Error.as_str(), cid = %cid,
-                                                              "hotkey emit failed: {e}"),
-                                }
-                            }
+    unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let msg = wparam.0 as u32;
+        if code >= 0 && msg != WM_MOUSEMOVE {
+            let ev = match msg {
+                WM_MBUTTONDOWN => Some(RawEvent::Down(Input::Mouse(MouseButton::Middle))),
+                WM_MBUTTONUP => Some(RawEvent::Up(Input::Mouse(MouseButton::Middle))),
+                WM_XBUTTONDOWN | WM_XBUTTONUP => {
+                    let ms = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+                    let button = match (ms.mouseData >> 16) as u16 {
+                        XBUTTON1 => Some(MouseButton::X1),
+                        XBUTTON2 => Some(MouseButton::X2),
+                        _ => None,
+                    };
+                    button.map(|b| {
+                        if msg == WM_XBUTTONDOWN {
+                            RawEvent::Down(Input::Mouse(b))
+                        } else {
+                            RawEvent::Up(Input::Mouse(b))
+                        }
+                    })
+                }
+                WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => Some(RawEvent::Other),
+                _ => None,
+            };
+            if let Some(ev) = ev {
+                forward(ev);
+            }
+        }
+        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    }
+
+    unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let resume = msg == WM_POWERBROADCAST
+            && matches!(wparam.0 as u32, PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND);
+        let unlock = msg == WM_WTSSESSION_CHANGE && wparam.0 as u32 == WTS_SESSION_UNLOCK;
+        if resume || unlock {
+            // Runs on the input thread; reinstall from the pump, not from here.
+            let _ = PostThreadMessageW(GetCurrentThreadId(), WM_APP_REINSTALL, WPARAM(0), LPARAM(0));
+            return if resume { LRESULT(1) } else { LRESULT(0) };
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    pub(super) fn post_quit(tid: u32) {
+        if tid != 0 {
+            unsafe {
+                if let Err(e) = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)) {
+                    log::warn!("[hotkeys] post WM_QUIT to input thread: {e}");
+                }
+            }
+        }
+    }
+
+    /// Start the input thread; returns its handle and thread id once its
+    /// message queue exists (so `post_quit` cannot be lost).
+    pub(super) fn spawn_input_thread(
+        tx: SyncSender<Msg>,
+        register: Vec<RegisterSpec>,
+        status: Arc<Mutex<HotkeyStatus>>,
+    ) -> (Option<JoinHandle<()>>, u32) {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("hotkey-input".into())
+            .spawn(move || input_thread(tx, register, status, ready_tx));
+        let handle = match spawned {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("[hotkeys] input thread failed to start: {e}");
+                return (None, 0);
+            }
+        };
+        match ready_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(tid) => (Some(handle), tid),
+            Err(e) => {
+                // Without its id it cannot be told to quit: detach rather
+                // than let stop_and_wait join it forever.
+                log::error!("[hotkeys] input thread did not report ready: {e}");
+                drop(handle);
+                (None, 0)
+            }
+        }
+    }
+
+    struct Hooks {
+        keyboard: Option<HHOOK>,
+        mouse: Option<HHOOK>,
+    }
+
+    impl Hooks {
+        fn unhook(&mut self) {
+            for h in [self.keyboard.take(), self.mouse.take()].into_iter().flatten() {
+                unsafe {
+                    let _ = UnhookWindowsHookEx(h);
+                }
+            }
+        }
+
+        fn install(&mut self, hinst: HINSTANCE, status: &Mutex<HotkeyStatus>) {
+            self.unhook();
+            let kb = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), hinst, 0) };
+            let ms = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), hinst, 0) };
+            let mut errors = Vec::new();
+            match kb {
+                Ok(h) => self.keyboard = Some(h),
+                Err(e) => errors.push(format!("WH_KEYBOARD_LL: {e}")),
+            }
+            match ms {
+                Ok(h) => self.mouse = Some(h),
+                Err(e) => errors.push(format!("WH_MOUSE_LL: {e}")),
+            }
+            let mut st = status.lock().unwrap();
+            st.keyboard_hook = self.keyboard.is_some();
+            st.mouse_hook = self.mouse.is_some();
+            st.hook_error = (!errors.is_empty()).then(|| errors.join("; "));
+            st.last_hook_install = Some(chrono::Local::now().to_rfc3339());
+            st.hook_installs += 1;
+            for e in &errors {
+                log::error!("[hotkeys] hook install failed: {e}");
+            }
+        }
+    }
+
+    /// Raw inputs the OS reports held right now (for `Matcher::reset_held`).
+    /// Generic VK_SHIFT/CONTROL/MENU are skipped: the L/R variants report too.
+    fn held_now() -> Vec<Input> {
+        let mut held = Vec::new();
+        for vk in 4..=0xFEu32 {
+            if matches!(vk, 0x10..=0x12) || unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 == 0 {
+                continue;
+            }
+            held.push(match vk {
+                0x04 => Input::Mouse(MouseButton::Middle),
+                0x05 => Input::Mouse(MouseButton::X1),
+                0x06 => Input::Mouse(MouseButton::X2),
+                v => Input::Key(v),
+            });
+        }
+        held
+    }
+
+    fn input_thread(
+        tx: SyncSender<Msg>,
+        register: Vec<RegisterSpec>,
+        status: Arc<Mutex<HotkeyStatus>>,
+        ready: std::sync::mpsc::Sender<u32>,
+    ) {
+        unsafe {
+            // Create this thread's message queue before anyone posts to it.
+            let mut msg = MSG::default();
+            let _ = PeekMessageW(&mut msg, HWND::default(), WM_USER, WM_USER, PM_NOREMOVE);
+        }
+        let _ = ready.send(unsafe { GetCurrentThreadId() });
+        HOOK_TX.with(|t| *t.borrow_mut() = Some(tx.clone()));
+
+        let hinst: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(Into::into).unwrap_or_default();
+        let hwnd = create_message_window(hinst);
+
+        // RegisterHotKey: a second path that survives dropped hooks.
+        let mut registered: HashMap<i32, String> = HashMap::new();
+        if let Some(hwnd) = hwnd {
+            for spec in &register {
+                let mods = HOT_KEY_MODIFIERS(spec.mods) | MOD_NOREPEAT;
+                let res = unsafe { RegisterHotKey(hwnd, spec.id, mods, spec.vk) };
+                let mut st = status.lock().unwrap();
+                let entry = st.bindings.iter_mut().find(|b| b.action == spec.action);
+                match res {
+                    Ok(()) => {
+                        registered.insert(spec.id, spec.action.clone());
+                        if let Some(b) = entry {
+                            b.registered = Some(true);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[hotkeys] RegisterHotKey for {} failed ({e}); the hook path still works",
+                                   spec.action);
+                        if let Some(b) = entry {
+                            b.registered = Some(false);
+                            b.register_error = Some(e.message().to_string());
                         }
                     }
                 }
             }
         }
 
-        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
-    }
+        // Resume / unlock notifications for the watchdog (best effort).
+        let power = hwnd.and_then(|h| unsafe {
+            RegisterSuspendResumeNotification(HANDLE(h.0), DEVICE_NOTIFY_WINDOW_HANDLE)
+                .map_err(|e| log::warn!("[hotkeys] resume notifications unavailable: {e}"))
+                .ok()
+        });
+        let session = hwnd.is_some_and(|h| unsafe {
+            WTSRegisterSessionNotification(h, NOTIFY_FOR_THIS_SESSION)
+                .map_err(|e| log::warn!("[hotkeys] unlock notifications unavailable: {e}"))
+                .is_ok()
+        });
 
-    // ── Install the hook ──────────────────────────────────────────────
-    let hook = match unsafe {
-        SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), HINSTANCE::default(), 0)
-    } {
-        Ok(h)  => { log::info!("[hotkeys] WH_KEYBOARD_LL installed"); h }
-        Err(e) => { log::error!("[hotkeys] Hook install failed: {e}"); HOOK_DATA.lock().unwrap().take(); return; }
-    };
+        let mut hooks = Hooks { keyboard: None, mouse: None };
+        hooks.install(hinst, &status);
+        log::info!("[hotkeys] input thread running (keyboard hook {}, mouse hook {}, {} RegisterHotKey)",
+                   hooks.keyboard.is_some(), hooks.mouse.is_some(), registered.len());
+        if let Some(h) = hwnd {
+            unsafe { SetTimer(h, WATCHDOG_TIMER, WATCHDOG_INTERVAL_MS, None) };
+        }
 
-    // ── Watcher thread posts WM_QUIT when stop_flag is set ────────────
-    let thread_id = unsafe { GetCurrentThreadId() };
-    thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            if stop_flag.load(Ordering::Relaxed) {
-                unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).ok(); }
-                break;
+        unsafe {
+            let mut msg = MSG::default();
+            loop {
+                let r = GetMessageW(&mut msg, HWND::default(), 0, 0);
+                if r.0 == 0 || r.0 == -1 {
+                    break; // WM_QUIT, or an error
+                }
+                match msg.message {
+                    WM_HOTKEY => {
+                        if let Some(action) = registered.get(&(msg.wParam.0 as i32)) {
+                            if let Err(TrySendError::Full(_)) = tx.try_send(Msg::Registered(action.clone())) {
+                                log::warn!("[hotkeys] dispatcher queue full; WM_HOTKEY dropped");
+                            }
+                        }
+                    }
+                    WM_TIMER if msg.wParam.0 == WATCHDOG_TIMER => reinstall(&mut hooks, hinst, &status, &tx),
+                    WM_APP_REINSTALL => {
+                        log::info!("[hotkeys] resume/unlock: reinstalling hooks");
+                        reinstall(&mut hooks, hinst, &status, &tx);
+                    }
+                    _ => {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
             }
         }
-    });
 
-    // ── Message loop (must stay on this thread) ───────────────────────
-    // WH_KEYBOARD_LL requires an active message pump on the installing thread.
-    // GetMessageW blocks until a message arrives — WM_QUIT breaks the loop.
-    log::info!("[hotkeys] Message loop running");
-    unsafe {
-        let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
-            // No DispatchMessage needed — LL hook callbacks fire directly
+        // Teardown on this thread (it owns the hooks, hotkeys and window).
+        hooks.unhook();
+        unsafe {
+            if let Some(h) = hwnd {
+                let _ = KillTimer(h, WATCHDOG_TIMER);
+                for id in registered.keys() {
+                    let _ = UnregisterHotKey(h, *id);
+                }
+                if session {
+                    let _ = WTSUnRegisterSessionNotification(h);
+                }
+                if let Some(p) = power {
+                    let _ = UnregisterSuspendResumeNotification(p);
+                }
+                let _ = DestroyWindow(h);
+            }
         }
-        UnhookWindowsHookEx(hook).ok();
+        HOOK_TX.with(|t| *t.borrow_mut() = None);
+        {
+            let mut st = status.lock().unwrap();
+            st.keyboard_hook = false;
+            st.mouse_hook = false;
+        }
+        log::info!("[hotkeys] input thread exited (hooks removed, {} hotkeys unregistered)", registered.len());
     }
 
-    *HOOK_DATA.lock().unwrap() = None;
-    log::info!("[hotkeys] Hook uninstalled");
-}
-
-// ── Parse "CommandOrControl+Shift+R" → (vk, ctrl, shift, alt) ────────────────
-
-fn parse_hotkey_to_vk(s: &str) -> Option<(u32, bool, bool, bool)> {
-    let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
-    let key_str = parts.last()?.trim();
-    let mod_parts = &parts[..parts.len() - 1];
-
-    let mut ctrl  = false;
-    let mut shift = false;
-    let mut alt   = false;
-
-    for m in mod_parts {
-        match m.to_lowercase().as_str() {
-            "ctrl" | "control" | "commandorcontrol" | "cmdorctrl" => ctrl  = true,
-            "shift"                                               => shift = true,
-            "alt"                                                 => alt   = true,
-            "meta" | "super" | "command" | "cmd"                 => ctrl  = true,
-            _ => {}
-        }
+    fn reinstall(hooks: &mut Hooks, hinst: HINSTANCE, status: &Mutex<HotkeyStatus>, tx: &SyncSender<Msg>) {
+        hooks.install(hinst, status);
+        // Up-events may have been missed while unhooked: resync from the OS.
+        let _ = tx.try_send(Msg::Resync(held_now()));
     }
 
-    // Strip web UI key name prefixes
-    let ku = key_str.to_uppercase();
-    let ku = ku.strip_prefix("KEY").unwrap_or(
-             ku.strip_prefix("DIGIT").unwrap_or(&ku));
-
-    let vk: u32 = match ku {
-        // Letters — VK codes are the same as ASCII uppercase (0x41–0x5A)
-        "A"=>0x41,"B"=>0x42,"C"=>0x43,"D"=>0x44,"E"=>0x45,"F"=>0x46,
-        "G"=>0x47,"H"=>0x48,"I"=>0x49,"J"=>0x4A,"K"=>0x4B,"L"=>0x4C,
-        "M"=>0x4D,"N"=>0x4E,"O"=>0x4F,"P"=>0x50,"Q"=>0x51,"R"=>0x52,
-        "S"=>0x53,"T"=>0x54,"U"=>0x55,"V"=>0x56,"W"=>0x57,"X"=>0x58,
-        "Y"=>0x59,"Z"=>0x5A,
-        // Digits
-        "0"=>0x30,"1"=>0x31,"2"=>0x32,"3"=>0x33,"4"=>0x34,
-        "5"=>0x35,"6"=>0x36,"7"=>0x37,"8"=>0x38,"9"=>0x39,
-        // Function keys
-        "F1"=>0x70,"F2"=>0x71,"F3"=>0x72,"F4"=>0x73,
-        "F5"=>0x74,"F6"=>0x75,"F7"=>0x76,"F8"=>0x77,
-        "F9"=>0x78,"F10"=>0x79,"F11"=>0x7A,"F12"=>0x7B,
-        // Navigation
-        "SPACE"|" "          =>0x20,
-        "RETURN"|"ENTER"     =>0x0D,
-        "TAB"                =>0x09,
-        "ESCAPE"|"ESC"       =>0x1B,
-        "BACKSPACE"          =>0x08,
-        "DELETE"|"DEL"       =>0x2E,
-        "INSERT"|"INS"       =>0x2D,
-        "HOME"               =>0x24,
-        "END"                =>0x23,
-        "PAGEUP"             =>0x21,
-        "PAGEDOWN"           =>0x22,
-        "ARROWLEFT"|"LEFT"   =>0x25,
-        "ARROWRIGHT"|"RIGHT" =>0x27,
-        "ARROWUP"|"UP"       =>0x26,
-        "ARROWDOWN"|"DOWN"   =>0x28,
-        // Numpad
-        "NUMPAD0"|"NUM0"=>0x60,"NUMPAD1"|"NUM1"=>0x61,
-        "NUMPAD2"|"NUM2"=>0x62,"NUMPAD3"|"NUM3"=>0x63,
-        "NUMPAD4"|"NUM4"=>0x64,"NUMPAD5"|"NUM5"=>0x65,
-        "NUMPAD6"|"NUM6"=>0x66,"NUMPAD7"|"NUM7"=>0x67,
-        "NUMPAD8"|"NUM8"=>0x68,"NUMPAD9"|"NUM9"=>0x69,
-        "NUMPADADD"|"NUMADD"        =>0x6B,
-        "NUMPADSUBTRACT"|"NUMSUB"   =>0x6D,
-        "NUMPADMULTIPLY"|"NUMMUL"   =>0x6A,
-        "NUMPADDIVIDE"|"NUMDIV"     =>0x6F,
-        "NUMPADENTER"|"NUMENTER"    =>0x0D,
-        "NUMPADDECIMAL"|"NUMDECIMAL"=>0x6E,
-        // Punctuation
-        "SEMICOLON"|";"    =>0xBA,
-        "COMMA"|","        =>0xBC,
-        "PERIOD"|"."       =>0xBE,
-        "SLASH"|"/"        =>0xBF,
-        "BACKSLASH"|"\\"   =>0xDC,
-        "QUOTE"|"'"        =>0xDE,
-        "BACKTICK"|"BACKQUOTE"|"`"=>0xC0,
-        "EQUAL"|"="        =>0xBB,
-        "MINUS"|"-"        =>0xBD,
-        "BRACKETLEFT"|"["  =>0xDB,
-        "BRACKETRIGHT"|"]" =>0xDD,
-        // Media
-        "MEDIAPLAYPAUSE"     =>0xB3,
-        "MEDIASTOP"          =>0xB2,
-        "MEDIATRACKPREVIOUS" =>0xB1,
-        "MEDIATRACKNEXT"     =>0xB0,
-        "AUDIOVOLUMEMUTE"    =>0xAD,
-        "AUDIOVOLUMEDOWN"    =>0xAE,
-        "AUDIOVOLUMEUP"      =>0xAF,
-        _ => return None,
-    };
-
-    Some((vk, ctrl, shift, alt))
+    fn create_message_window(hinst: HINSTANCE) -> Option<HWND> {
+        let class = w!("ClipLiteHotkeyWindow");
+        unsafe {
+            let wc = WNDCLASSW { lpfnWndProc: Some(wnd_proc), hInstance: hinst, lpszClassName: class, ..Default::default() };
+            // Fails harmlessly with "class already exists" on a re-register.
+            RegisterClassW(&wc);
+            match CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("ClipLite hotkeys"), WINDOW_STYLE(0),
+                                  0, 0, 0, 0, HWND_MESSAGE, HMENU::default(), hinst, None) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    log::error!("[hotkeys] message window failed ({e}); RegisterHotKey path disabled");
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
