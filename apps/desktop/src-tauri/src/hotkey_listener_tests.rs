@@ -71,6 +71,135 @@ fn build_bindings_reports_and_skips() {
     // Only chords RegisterHotKey can express get an id.
     assert_eq!(b.register.len(), 1);
     assert_eq!(b.register[0].action, "start");
+    assert!(start.registerable && !start.registered);
+}
+
+fn map_of(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs.iter().map(|(a, s)| (a.to_string(), s.to_string())).collect()
+}
+
+#[test]
+fn build_bindings_registers_only_ctrl_alt_win_chords_once() {
+    let b = build_bindings(&map_of(&[
+        ("start", "Ctrl+Alt+F9"),
+        ("stop", "Shift+F2"),                      // Shift-only: hook only
+        ("pause", "F11"),                          // bare key: hook only
+        ("replay_save", "CommandOrControl+Backquote"),
+        ("replay_toggle", "Ctrl+`"),               // same chord as replay_save
+        ("library", "Ctrl+Mouse4"),
+    ]));
+    let reg: Vec<&str> = b.register.iter().map(|r| r.action.as_str()).collect();
+    assert_eq!(reg, ["replay_save", "start"]);
+    assert_ne!(b.register[0].id, b.register[1].id);
+    let st = |a: &str| b.status.iter().find(|s| s.action == a).unwrap().clone();
+    assert!(st("replay_save").registerable);
+    assert!(!st("replay_toggle").registerable, "internal duplicate is not registered twice");
+    for a in ["stop", "pause", "library"] {
+        assert!(!st(a).registerable, "{a}");
+    }
+    assert!(b.status.iter().all(|s| !s.registered && s.register_error.is_none()));
+}
+
+#[test]
+fn owner_settings_load_cleanly() {
+    let b = build_bindings(&map_of(&[
+        ("replay_save", "CommandOrControl+Backquote"),
+        ("replay_toggle", "CommandOrControl+1"),
+        ("stop", "CommandOrControl+F1"),
+        ("pause", "CommandOrControl+F3"),
+        ("library", "CommandOrControl+F4"),
+        ("start", ""),
+        ("annotate", "CommandOrControl+Shift+A"),
+    ]));
+    assert_eq!(b.active.len(), 5);
+    assert!(b.status.iter().all(|s| s.parsed));
+    assert_eq!(b.register.len(), 5);
+}
+
+/// Records RegisterHotKey / UnregisterHotKey calls; fails actions in `busy`.
+#[derive(Default)]
+struct FakeApi {
+    calls: Vec<String>,
+    busy: Vec<&'static str>,
+}
+
+impl HotkeyApi for FakeApi {
+    fn register(&mut self, spec: &RegisterSpec) -> Result<(), String> {
+        self.calls.push(format!("reg {}", spec.action));
+        if self.busy.contains(&spec.action.as_str()) {
+            Err("Hot key is already registered.".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn unregister(&mut self, id: i32) {
+        self.calls.push(format!("unreg {id}"));
+    }
+}
+
+fn registrar_setup() -> (Registrar, HotkeyStatus, FakeApi) {
+    let b = build_bindings(&map_of(&[("start", "Ctrl+Alt+F9"), ("stop", "Ctrl+Alt+F10"), ("pause", "Shift+F2")]));
+    let st = HotkeyStatus { bindings: b.status, ..Default::default() };
+    (Registrar::new(b.register), st, FakeApi { busy: vec!["stop"], ..Default::default() })
+}
+
+fn registered(st: &HotkeyStatus) -> Vec<(&str, bool, bool)> {
+    st.bindings.iter().map(|b| (b.action.as_str(), b.registered, b.register_error.is_some())).collect()
+}
+
+#[test]
+fn registrar_registers_only_while_wanted() {
+    let (mut r, mut st, mut api) = registrar_setup();
+    assert!(!st.register_active);
+    r.set_wanted(true, &mut api, &mut st);
+    assert_eq!(api.calls, ["reg start", "reg stop"]);
+    assert!(st.register_active);
+    assert_eq!(registered(&st), [("pause", false, false), ("start", true, false), ("stop", false, true)]);
+    let start_id = r.ids().next().unwrap();
+    assert_eq!(r.action(start_id), Some("start"));
+    assert_eq!(r.ids().count(), 1, "the failed one holds no id");
+
+    api.calls.clear();
+    r.set_wanted(true, &mut api, &mut st);
+    assert!(api.calls.is_empty(), "no change, no calls");
+
+    r.set_wanted(false, &mut api, &mut st);
+    assert_eq!(api.calls, [format!("unreg {start_id}")]);
+    assert!(!st.register_active);
+    assert_eq!(r.action(start_id), None);
+    // The last failure stays visible after unregistering.
+    assert_eq!(registered(&st), [("pause", false, false), ("start", false, false), ("stop", false, true)]);
+
+    // Success on a later attempt clears the error.
+    api.busy.clear();
+    r.set_wanted(true, &mut api, &mut st);
+    assert_eq!(registered(&st), [("pause", false, false), ("start", true, false), ("stop", true, false)]);
+}
+
+#[test]
+fn registrar_suspends_while_capturing() {
+    let (mut r, mut st, mut api) = registrar_setup();
+    r.set_capturing(true, &mut api, &mut st);
+    r.set_wanted(true, &mut api, &mut st);
+    assert!(api.calls.is_empty() && !st.register_active);
+    r.set_capturing(false, &mut api, &mut st);
+    assert_eq!(api.calls, ["reg start", "reg stop"]);
+    api.calls.clear();
+    r.set_capturing(true, &mut api, &mut st);
+    assert_eq!(api.calls.len(), 1);
+    assert!(api.calls[0].starts_with("unreg "));
+    assert!(st.bindings.iter().all(|b| !b.registered));
+}
+
+#[test]
+fn registrar_teardown_unregisters_everything() {
+    let (mut r, mut st, mut api) = registrar_setup();
+    api.busy.clear();
+    r.set_wanted(true, &mut api, &mut st);
+    api.calls.clear();
+    r.unregister_all(&mut api, &mut st);
+    assert_eq!(api.calls.len(), 2);
+    assert!(!st.register_active && r.ids().next().is_none());
 }
 
 // ── Dispatcher state ──────────────────────────────────────────────────────────

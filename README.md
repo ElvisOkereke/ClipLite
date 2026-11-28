@@ -166,7 +166,7 @@ Use this section to describe the project accurately. Everything under **Built an
 - **Build and release:** CI on Windows with zero warnings, 78 tests, pinned and checksum-verified FFmpeg (including a driver-compatibility analysis), and an installer that bundles the recorder.
 
 **Built, hardware verification pending**
-- **WS1 hotkeys rewrite** (branch `phase1/ws1`): hooks plus `RegisterHotKey` on one Rust input thread, Rust-side action dispatch, capture of any chord (mouse, modifier-only) through the hook, conflict warnings, and an elevated-foreground banner. Unit-tested, but the 20/20 hardware matrix, the elevated matrix and a real-game check have not been run, so do not claim the hotkey problem is fixed. Evidence and open items: `docs/adr/0003-hotkeys.md`.
+- **WS1 hotkeys rewrite** (branch `phase1/ws1`): hooks plus `RegisterHotKey` on one Rust input thread (registrations are exclusive, so they're held only while an elevated app or ClipLite itself is focused), Rust-side action dispatch, capture of any chord (mouse, modifier-only) through the hook, conflict warnings, and an elevated-foreground banner. Unit-tested, but the 20/20 hardware matrix, the elevated matrix and a real-game check have not been run, so do not claim the hotkey problem is fixed. Evidence and open items: `docs/adr/0003-hotkeys.md`.
 
 **Planned (do not describe as built)**
 - AI or ML features of any kind (transcription, search, highlight detection), the model registry, eval sets, and quantization.

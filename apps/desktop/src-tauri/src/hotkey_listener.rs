@@ -7,9 +7,14 @@
 //!   into a [`RawEvent`], `try_send` it to the dispatcher and call
 //!   `CallNextHookEx`. No logging, no locks, no IPC. LL hooks also see input
 //!   while a fullscreen game has focus.
-//! - `RegisterHotKey(hwnd, id, mods | MOD_NOREPEAT, vk)` for every binding that
-//!   has a `registerhotkey_form`: a second, independent path (`WM_HOTKEY`) for
-//!   when Windows silently drops the hooks (callback timeout, sleep, UAC).
+//! - `RegisterHotKey(hwnd, id, mods | MOD_NOREPEAT, vk)` for every
+//!   [`registerable`] binding (keyboard chord with Ctrl, Alt or Win), but
+//!   **only while needed**: registrations are exclusive system-wide, so they
+//!   exist only while ClipLite's own window or a definitely elevated app is
+//!   focused (decided by the foreground watcher in `elevation.rs`, posted here
+//!   as `WM_APP_REGISTER`) and never during a capture (`WM_APP_CAPTURING`, from
+//!   the dispatcher). The hook is always the primary path; `WM_HOTKEY` is the
+//!   second path for where the hook is known to go deaf.
 //! - Watchdog: both hooks are unhooked and reinstalled every 60 s, and after
 //!   resume from sleep / session unlock, on this thread (a posted thread
 //!   message or `WM_TIMER`), so the message pump stays the owner.
@@ -20,8 +25,9 @@
 //! worker task (actions run one at a time, in press order), which emits
 //! `hotkey-fired` after each action ran. Captures time out after 30 s.
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError},
         Arc, Mutex,
     },
@@ -29,7 +35,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cliplite_core::hotkey::{find_conflicts, parse_bindings, Capture, CaptureState, Chord, Input, Matcher, RawEvent};
+use cliplite_core::hotkey::{
+    find_conflicts, parse_bindings, registerable, Capture, CaptureState, Chord, Input, Matcher, RawEvent,
+};
 use cliplite_core::telemetry::{new_cid, Stage};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -87,10 +95,15 @@ pub struct BindingStatus {
     pub error: Option<String>,
     pub canonical: Option<String>,
     pub display: Option<String>,
-    /// `None`: not expressible as `RegisterHotKey` (mouse, modifier-only, two
-    /// keys) or not attempted yet.
-    pub registered: Option<bool>,
-    /// Why `RegisterHotKey` failed (usually: another app owns the combo).
+    /// This binding owns a `RegisterHotKey` slot: a keyboard chord with Ctrl,
+    /// Alt or Win, and not the same chord as an earlier binding (one chord is
+    /// registered once).
+    pub registerable: bool,
+    /// Registered right now (only while registration is active, see
+    /// [`HotkeyStatus::register_active`]).
+    pub registered: bool,
+    /// Why the last `RegisterHotKey` attempt failed (another app owns the
+    /// combo); cleared by a later success. Never set for internal conflicts.
     pub register_error: Option<String>,
 }
 
@@ -128,10 +141,16 @@ pub fn build_bindings(map: &HashMap<String, String>) -> Bindings {
 
     let mut status = Vec::new();
     let mut register = Vec::new();
+    let mut taken = HashSet::new();
     for (action, chord) in &active {
-        let form = chord.registerhotkey_form();
-        if let Some((mods, vk)) = form {
-            register.push(RegisterSpec { id: register.len() as i32 + 1, action: action.clone(), mods, vk });
+        let mut owns_slot = false;
+        if let (true, Some((mods, vk))) = (registerable(chord), chord.registerhotkey_form()) {
+            // Same chord bound twice: register it once (the matcher also
+            // picks the first action in this order).
+            if taken.insert((mods, vk)) {
+                register.push(RegisterSpec { id: register.len() as i32 + 1, action: action.clone(), mods, vk });
+                owns_slot = true;
+            }
         }
         status.push(BindingStatus {
             action: action.clone(),
@@ -140,7 +159,8 @@ pub fn build_bindings(map: &HashMap<String, String>) -> Bindings {
             error: None,
             canonical: Some(chord.to_canonical()),
             display: Some(chord.display()),
-            registered: None,
+            registerable: owns_slot,
+            registered: false,
             register_error: None,
         });
     }
@@ -153,7 +173,8 @@ pub fn build_bindings(map: &HashMap<String, String>) -> Bindings {
             error: Some(error),
             canonical: None,
             display: None,
-            registered: None,
+            registerable: false,
+            registered: false,
             register_error: None,
         });
     }
@@ -178,9 +199,102 @@ pub struct HotkeyStatus {
     pub last_hook_install: Option<String>,
     pub hook_installs: u32,
     pub capturing: bool,
+    /// `RegisterHotKey` registrations are held right now (ClipLite or an
+    /// elevated app is focused, and no capture is running).
+    pub register_active: bool,
     /// The input thread's message loop is running.
     pub input_alive: bool,
     pub dispatcher_alive: bool,
+}
+
+/// `RegisterHotKey` / `UnregisterHotKey` on the input thread (faked in tests).
+pub trait HotkeyApi {
+    fn register(&mut self, spec: &RegisterSpec) -> Result<(), String>;
+    fn unregister(&mut self, id: i32);
+}
+
+/// Which bindings are registered, and when. Registrations are held only while
+/// `wanted` (foreground watcher) and not `capturing`; every change keeps
+/// [`HotkeyStatus`] in step. Lives on the input thread.
+pub struct Registrar {
+    specs: Vec<RegisterSpec>,
+    wanted: bool,
+    capturing: bool,
+    /// id -> action, for the ids currently registered.
+    registered: HashMap<i32, String>,
+    active: bool,
+}
+
+impl Registrar {
+    pub fn new(specs: Vec<RegisterSpec>) -> Self {
+        Self { specs, wanted: false, capturing: false, registered: HashMap::new(), active: false }
+    }
+
+    pub fn set_wanted(&mut self, wanted: bool, api: &mut impl HotkeyApi, status: &mut HotkeyStatus) {
+        self.wanted = wanted;
+        self.apply(api, status);
+    }
+
+    pub fn set_capturing(&mut self, capturing: bool, api: &mut impl HotkeyApi, status: &mut HotkeyStatus) {
+        self.capturing = capturing;
+        self.apply(api, status);
+    }
+
+    /// Teardown: unregister everything, whatever was wanted.
+    pub fn unregister_all(&mut self, api: &mut impl HotkeyApi, status: &mut HotkeyStatus) {
+        self.wanted = false;
+        self.apply(api, status);
+    }
+
+    /// The action for a `WM_HOTKEY` id, if that id is registered now.
+    pub fn action(&self, id: i32) -> Option<&str> {
+        self.registered.get(&id).map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub fn ids(&self) -> impl Iterator<Item = i32> + '_ {
+        self.registered.keys().copied()
+    }
+
+    fn apply(&mut self, api: &mut impl HotkeyApi, status: &mut HotkeyStatus) {
+        let want = self.wanted && !self.capturing;
+        if want == self.active {
+            return;
+        }
+        self.active = want;
+        status.register_active = want;
+        if want {
+            for spec in &self.specs {
+                let entry = status.bindings.iter_mut().find(|b| b.action == spec.action);
+                match api.register(spec) {
+                    Ok(()) => {
+                        self.registered.insert(spec.id, spec.action.clone());
+                        if let Some(b) = entry {
+                            b.registered = true;
+                            b.register_error = None;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[hotkeys] RegisterHotKey for {} failed ({e}); the hook path still works",
+                                   spec.action);
+                        if let Some(b) = entry {
+                            b.registered = false;
+                            b.register_error = Some(e);
+                        }
+                    }
+                }
+            }
+        } else {
+            for (id, _) in self.registered.drain() {
+                api.unregister(id);
+            }
+            for b in &mut status.bindings {
+                b.registered = false;
+            }
+        }
+        log::info!("[hotkeys] RegisterHotKey {} ({} registered)",
+                   if want { "active" } else { "released" }, self.registered.len());
+    }
 }
 
 /// Messages to the dispatcher thread.
@@ -204,9 +318,11 @@ pub(crate) enum Msg {
 pub struct HotkeyListener {
     tx: SyncSender<Msg>,
     status: Arc<Mutex<HotkeyStatus>>,
-    /// Input thread id (0 if it failed to start / non-Windows).
-    #[cfg_attr(not(windows), allow(dead_code))]
-    input_tid: u32,
+    /// Input thread id (0 if it failed to start / non-Windows). Shared with
+    /// the dispatcher, which posts capture start/end to it.
+    input_tid: Arc<AtomicU32>,
+    /// Last `RegisterHotKey` request sent to the input thread.
+    register_wanted: AtomicBool,
     input: Mutex<Option<JoinHandle<()>>>,
     dispatcher: Mutex<Option<JoinHandle<()>>>,
 }
@@ -221,12 +337,13 @@ impl HotkeyListener {
         }
         let status = Arc::new(Mutex::new(HotkeyStatus { bindings: b.status.clone(), ..Default::default() }));
         let (tx, rx) = sync_channel(CHANNEL_CAPACITY);
+        let tid = Arc::new(AtomicU32::new(0));
 
         let dispatcher = {
-            let (app, status, active) = (app.clone(), status.clone(), b.active.clone());
+            let (app, status, active, tid) = (app.clone(), status.clone(), b.active.clone(), tid.clone());
             std::thread::Builder::new()
                 .name("hotkey-dispatch".into())
-                .spawn(move || dispatch_loop(app, rx, active, status))
+                .spawn(move || dispatch_loop(app, rx, active, status, tid))
                 .map_err(|e| log::error!("[hotkeys] dispatcher thread failed to start: {e}"))
                 .ok()
         };
@@ -239,7 +356,26 @@ impl HotkeyListener {
             (None, 0)
         };
 
-        Self { tx, status, input_tid, input: Mutex::new(input), dispatcher: Mutex::new(dispatcher) }
+        tid.store(input_tid, Ordering::SeqCst);
+
+        Self {
+            tx,
+            status,
+            input_tid: tid,
+            register_wanted: AtomicBool::new(false),
+            input: Mutex::new(input),
+            dispatcher: Mutex::new(dispatcher),
+        }
+    }
+
+    /// Hold `RegisterHotKey` registrations (`true`) or release them. Called
+    /// by the foreground watcher on every poll; only a change is posted to
+    /// the input thread, which owns the registrations.
+    pub fn set_register_wanted(&self, want: bool) {
+        if self.register_wanted.swap(want, Ordering::SeqCst) != want {
+            #[cfg(windows)]
+            win::post_register(self.input_tid.load(Ordering::SeqCst), want);
+        }
     }
 
     /// Stop both threads and wait for them: hooks unhooked, hotkeys
@@ -247,7 +383,7 @@ impl HotkeyListener {
     pub fn stop_and_wait(&self) {
         if let Some(h) = self.input.lock().unwrap().take() {
             #[cfg(windows)]
-            win::post_quit(self.input_tid);
+            win::post_quit(self.input_tid.load(Ordering::SeqCst));
             if h.join().is_err() {
                 log::error!("[hotkeys] input thread panicked");
             }
@@ -476,8 +612,15 @@ fn os_held_inputs() -> Vec<Input> {
     return Vec::new();
 }
 
-fn dispatch_loop(app: AppHandle, rx: Receiver<Msg>, active: Vec<(String, Chord)>, status: Arc<Mutex<HotkeyStatus>>) {
+fn dispatch_loop(
+    app: AppHandle,
+    rx: Receiver<Msg>,
+    active: Vec<(String, Chord)>,
+    status: Arc<Mutex<HotkeyStatus>>,
+    input_tid: Arc<AtomicU32>,
+) {
     status.lock().unwrap().dispatcher_alive = true;
+    let mut was_capturing = false;
     let mut state = Dispatcher::new(active);
     let jobs = spawn_action_worker(app.clone());
 
@@ -523,8 +666,18 @@ fn dispatch_loop(app: AppHandle, rx: Receiver<Msg>, active: Vec<(String, Chord)>
                 Effect::Resync => state.resync(os_held_inputs()),
             }
         }
-        status.lock().unwrap().capturing = state.capturing();
+        let capturing = state.capturing();
+        status.lock().unwrap().capturing = capturing;
+        if capturing != was_capturing {
+            // RegisterHotKey would swallow the chord being recorded from the
+            // WebView (compatibility mode); release registrations meanwhile.
+            was_capturing = capturing;
+            #[cfg(windows)]
+            win::post_capturing(input_tid.load(Ordering::SeqCst), capturing);
+        }
     }
+    #[cfg(not(windows))]
+    let _ = input_tid;
     {
         let mut st = status.lock().unwrap();
         st.dispatcher_alive = false;
@@ -557,6 +710,47 @@ mod win {
 
     /// Posted to the input thread: reinstall both hooks.
     const WM_APP_REINSTALL: u32 = WM_APP + 1;
+    /// Posted to the input thread: wParam 1 = hold `RegisterHotKey`
+    /// registrations (foreground watcher), 0 = release them.
+    const WM_APP_REGISTER: u32 = WM_APP + 2;
+    /// Posted to the input thread: wParam 1 = a capture started, 0 = ended.
+    const WM_APP_CAPTURING: u32 = WM_APP + 3;
+
+    struct Win32Api {
+        hwnd: HWND,
+    }
+
+    impl HotkeyApi for Win32Api {
+        fn register(&mut self, spec: &RegisterSpec) -> Result<(), String> {
+            let mods = HOT_KEY_MODIFIERS(spec.mods) | MOD_NOREPEAT;
+            unsafe { RegisterHotKey(self.hwnd, spec.id, mods, spec.vk) }.map_err(|e| e.message().to_string())
+        }
+        fn unregister(&mut self, id: i32) {
+            unsafe {
+                let _ = UnregisterHotKey(self.hwnd, id);
+            }
+        }
+    }
+
+    fn post(tid: u32, msg: u32, on: bool) {
+        if tid != 0 {
+            unsafe {
+                if let Err(e) = PostThreadMessageW(tid, msg, WPARAM(on as usize), LPARAM(0)) {
+                    log::warn!("[hotkeys] post 0x{msg:X} to input thread: {e}");
+                }
+            }
+        }
+    }
+
+    /// Ask the input thread to hold (or release) `RegisterHotKey` registrations.
+    pub(super) fn post_register(tid: u32, on: bool) {
+        post(tid, WM_APP_REGISTER, on);
+    }
+
+    /// Tell the input thread a capture started or ended.
+    pub(super) fn post_capturing(tid: u32, on: bool) {
+        post(tid, WM_APP_CAPTURING, on);
+    }
 
     thread_local! {
         /// The dispatcher channel for the hook callbacks. LL hook callbacks run
@@ -747,32 +941,10 @@ mod win {
         let hinst: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(Into::into).unwrap_or_default();
         let hwnd = create_message_window(hinst);
 
-        // RegisterHotKey: a second path that survives dropped hooks.
-        let mut registered: HashMap<i32, String> = HashMap::new();
-        if let Some(hwnd) = hwnd {
-            for spec in &register {
-                let mods = HOT_KEY_MODIFIERS(spec.mods) | MOD_NOREPEAT;
-                let res = unsafe { RegisterHotKey(hwnd, spec.id, mods, spec.vk) };
-                let mut st = status.lock().unwrap();
-                let entry = st.bindings.iter_mut().find(|b| b.action == spec.action);
-                match res {
-                    Ok(()) => {
-                        registered.insert(spec.id, spec.action.clone());
-                        if let Some(b) = entry {
-                            b.registered = Some(true);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("[hotkeys] RegisterHotKey for {} failed ({e}); the hook path still works",
-                                   spec.action);
-                        if let Some(b) = entry {
-                            b.registered = Some(false);
-                            b.register_error = Some(e.message().to_string());
-                        }
-                    }
-                }
-            }
-        }
+        // RegisterHotKey: held only while the foreground watcher asks for it
+        // (WM_APP_REGISTER), so nothing is registered at start.
+        let mut registrar = Registrar::new(register);
+        let mut api = hwnd.map(|hwnd| Win32Api { hwnd });
 
         // Resume / unlock notifications for the watchdog (best effort).
         let power = hwnd.and_then(|h| unsafe {
@@ -788,8 +960,8 @@ mod win {
 
         let mut hooks = Hooks { keyboard: None, mouse: None };
         hooks.install(hinst, &status);
-        log::info!("[hotkeys] input thread running (keyboard hook {}, mouse hook {}, {} RegisterHotKey)",
-                   hooks.keyboard.is_some(), hooks.mouse.is_some(), registered.len());
+        log::info!("[hotkeys] input thread running (keyboard hook {}, mouse hook {}, RegisterHotKey on demand)",
+                   hooks.keyboard.is_some(), hooks.mouse.is_some());
         // Thread timer (no window): the watchdog works even if the message
         // window could not be created. WM_TIMER arrives with hwnd NULL.
         let watchdog = unsafe { SetTimer(HWND::default(), 0, WATCHDOG_INTERVAL_MS, None) };
@@ -812,8 +984,8 @@ mod win {
                 }
                 match msg.message {
                     WM_HOTKEY => {
-                        if let Some(action) = registered.get(&(msg.wParam.0 as i32)) {
-                            if let Err(TrySendError::Full(_)) = tx.try_send(Msg::Registered(action.clone())) {
+                        if let Some(action) = registrar.action(msg.wParam.0 as i32) {
+                            if let Err(TrySendError::Full(_)) = tx.try_send(Msg::Registered(action.to_string())) {
                                 log::warn!("[hotkeys] dispatcher queue full; WM_HOTKEY dropped");
                             }
                         }
@@ -822,6 +994,17 @@ mod win {
                     WM_APP_REINSTALL => {
                         log::info!("[hotkeys] resume/unlock: reinstalling hooks");
                         reinstall(&mut hooks, hinst, &status, &tx);
+                    }
+                    WM_APP_REGISTER | WM_APP_CAPTURING => {
+                        if let Some(api) = api.as_mut() {
+                            let on = msg.wParam.0 != 0;
+                            let mut st = status.lock().unwrap();
+                            if msg.message == WM_APP_REGISTER {
+                                registrar.set_wanted(on, api, &mut st);
+                            } else {
+                                registrar.set_capturing(on, api, &mut st);
+                            }
+                        }
                     }
                     _ => {
                         let _ = TranslateMessage(&msg);
@@ -833,14 +1016,14 @@ mod win {
 
         // Teardown on this thread (it owns the hooks, hotkeys and window).
         hooks.unhook();
+        if let Some(api) = api.as_mut() {
+            registrar.unregister_all(api, &mut status.lock().unwrap());
+        }
         unsafe {
             if watchdog != 0 {
                 let _ = KillTimer(HWND::default(), watchdog);
             }
             if let Some(h) = hwnd {
-                for id in registered.keys() {
-                    let _ = UnregisterHotKey(h, *id);
-                }
                 if session {
                     let _ = WTSUnRegisterSessionNotification(h);
                 }
@@ -857,7 +1040,7 @@ mod win {
             st.mouse_hook = false;
             st.input_alive = false;
         }
-        log::info!("[hotkeys] input thread exited (hooks removed, {} hotkeys unregistered)", registered.len());
+        log::info!("[hotkeys] input thread exited (hooks removed, hotkeys unregistered)");
     }
 
     fn reinstall(hooks: &mut Hooks, hinst: HINSTANCE, status: &Mutex<HotkeyStatus>, tx: &SyncSender<Msg>) {
