@@ -98,9 +98,13 @@ export function HotkeyRecorder({ hotkeys, onChange: onChangeProp, refreshKey = 0
   }, []);
 
   // Cancel on unmount.
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (capturingRef.current !== null) cancelHotkeyCapture().catch(() => {});
+  // (Re)set on mount too: React StrictMode mounts, unmounts and remounts in dev.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (capturingRef.current !== null) cancelHotkeyCapture().catch(() => {});
+    };
   }, []);
 
   // While capturing: cancel on blur / click elsewhere, keep input out of the page.
