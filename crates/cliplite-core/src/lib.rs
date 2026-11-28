@@ -4,6 +4,7 @@
 //! crate, which keeps it free of any GPU/WebView2 context (see ARCHITECTURE.md).
 pub mod audio;
 pub mod ffmpeg;
+pub mod hotkey;
 pub mod ipc;
 pub mod paths;
 pub mod ring;
