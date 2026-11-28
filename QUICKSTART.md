@@ -52,14 +52,14 @@ Outputs to `target/release/`. Both `cliplite.exe` and `cliplite-recorder.exe` mu
 
 | Action | Default |
 |---|---|
-| Start recording | `Ctrl+Shift+R` |
-| Stop recording | `Ctrl+Shift+S` |
-| Pause/resume | `Ctrl+Shift+P` |
-| Open library | `Ctrl+Shift+L` |
-| Toggle replay buffer | `Alt+F1` |
-| Save replay clip | `Alt+F2` |
+| Start recording | `Ctrl+Alt+F9` |
+| Stop recording | `Ctrl+Alt+F10` |
+| Pause/resume | `Ctrl+Alt+F11` |
+| Open library | `Ctrl+Alt+F7` |
+| Toggle replay buffer | `Ctrl+Alt+F8` |
+| Save replay clip | `Ctrl+Alt+F12` |
 
-All hotkeys are configurable in Settings → Save Settings to apply.
+All hotkeys are configurable in Settings → Save Settings to apply. Saved bindings are kept when defaults change.
 
 ## Things that must never be removed
 

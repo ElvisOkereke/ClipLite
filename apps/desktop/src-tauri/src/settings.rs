@@ -43,12 +43,14 @@ pub const DEFAULT_REPLAY_CAP_MB: u32 = 512;
 impl Default for Settings {
     fn default() -> Self {
         let mut hotkeys = HashMap::new();
-        hotkeys.insert("start".to_string(),         "CommandOrControl+Shift+R".to_string());
-        hotkeys.insert("stop".to_string(),          "CommandOrControl+Shift+S".to_string());
-        hotkeys.insert("pause".to_string(),         "CommandOrControl+Shift+P".to_string());
-        hotkeys.insert("library".to_string(),       "CommandOrControl+Shift+L".to_string());
-        hotkeys.insert("replay_toggle".to_string(), "CommandOrControl+Shift+B".to_string());
-        hotkeys.insert("replay_save".to_string(),   "CommandOrControl+Shift+F".to_string());
+        // Ctrl+Alt+F-keys: rarely used by games, browsers, Discord or editors,
+        // and RegisterHotKey-able. Existing saved bindings are never rewritten.
+        hotkeys.insert("replay_save".to_string(),   "Ctrl+Alt+F12".to_string());
+        hotkeys.insert("replay_toggle".to_string(), "Ctrl+Alt+F8".to_string());
+        hotkeys.insert("start".to_string(),         "Ctrl+Alt+F9".to_string());
+        hotkeys.insert("stop".to_string(),          "Ctrl+Alt+F10".to_string());
+        hotkeys.insert("pause".to_string(),         "Ctrl+Alt+F11".to_string());
+        hotkeys.insert("library".to_string(),       "Ctrl+Alt+F7".to_string());
 
         let output_dir = dirs::video_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
@@ -247,5 +249,39 @@ mod tests {
         assert_eq!(serde_json::to_value(&s).unwrap(), once);
         assert!(!Settings::default().clone().migrate(), "fresh defaults are already v2");
     }
-}
 
+    #[test]
+    fn default_hotkeys_avoid_common_app_shortcuts() {
+        let d = Settings::default().hotkeys;
+        let want = [
+            ("replay_save", "Ctrl+Alt+F12"),
+            ("replay_toggle", "Ctrl+Alt+F8"),
+            ("start", "Ctrl+Alt+F9"),
+            ("stop", "Ctrl+Alt+F10"),
+            ("pause", "Ctrl+Alt+F11"),
+            ("library", "Ctrl+Alt+F7"),
+        ];
+        assert_eq!(d.len(), want.len());
+        for (action, chord) in want {
+            assert_eq!(d.get(action).map(String::as_str), Some(chord), "{action}");
+        }
+    }
+
+    #[test]
+    fn saved_bindings_are_not_migrated() {
+        let json = serde_json::json!({
+            "settings_version": 1,
+            "hotkeys": {
+                "replay_save": "CommandOrControl+Backquote",
+                "start": "",
+                "annotate": "CommandOrControl+Shift+A",
+            },
+        });
+        let mut s: Settings = serde_json::from_value(json).unwrap();
+        s.migrate();
+        assert_eq!(s.hotkeys.len(), 3);
+        assert_eq!(s.hotkeys["replay_save"], "CommandOrControl+Backquote");
+        assert_eq!(s.hotkeys["start"], "");
+        assert_eq!(s.hotkeys["annotate"], "CommandOrControl+Shift+A");
+    }
+}
