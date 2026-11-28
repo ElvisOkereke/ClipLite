@@ -172,3 +172,105 @@ fn registerhotkey_form() {
     assert!(c("Ctrl+Alt").is_modifier_only());
     assert!(!c("Ctrl+F2").is_modifier_only());
 }
+
+fn vk(v: u32) -> Input {
+    Input::Key(v)
+}
+
+#[test]
+fn lr_modifiers_tracked_independently() {
+    let mut m = Matcher::new(vec![("a".into(), c("Ctrl+F2"))]);
+    assert_eq!(m.on_event(RawEvent::Down(vk(VK_LCONTROL))), None);
+    assert_eq!(m.on_event(RawEvent::Down(vk(VK_RCONTROL))), None);
+    assert_eq!(m.on_event(RawEvent::Up(vk(VK_LCONTROL))), None);
+    // Right Ctrl is still held, so Ctrl counts as held.
+    assert_eq!(m.on_event(down("F2")), Some("a".into()));
+    m.on_event(up("F2"));
+    m.on_event(RawEvent::Up(vk(VK_RCONTROL)));
+    // Now nothing is held: F2 alone must not fire.
+    assert_eq!(m.on_event(down("F2")), None);
+}
+
+#[test]
+fn lr_modifier_only_fires_once_on_last_release() {
+    let mut m = Matcher::new(vec![("mo".into(), c("Ctrl+Alt"))]);
+    m.on_event(RawEvent::Down(vk(VK_LCONTROL)));
+    m.on_event(RawEvent::Down(vk(VK_LMENU)));
+    m.on_event(RawEvent::Down(vk(VK_RCONTROL)));
+    // Releasing one Ctrl while the other is held is not a release of Ctrl.
+    assert_eq!(m.on_event(RawEvent::Up(vk(VK_RCONTROL))), None);
+    assert_eq!(m.on_event(RawEvent::Up(vk(VK_LMENU))), Some("mo".into()));
+}
+
+#[test]
+fn capture_tracks_lr_modifiers() {
+    let mut cap = Capture::default();
+    cap.on_event(RawEvent::Down(vk(VK_LSHIFT)));
+    cap.on_event(RawEvent::Down(vk(VK_RSHIFT)));
+    assert_eq!(cap.on_event(RawEvent::Up(vk(VK_LSHIFT))), CaptureState::Holding(c("Shift")));
+    assert_eq!(cap.on_event(RawEvent::Up(vk(VK_RSHIFT))), CaptureState::Done(c("Shift")));
+}
+
+#[test]
+fn modifier_only_not_fired_after_click() {
+    let mut m = Matcher::new(vec![("mo".into(), c("Ctrl+Alt")), ("ctrl".into(), c("Ctrl"))]);
+    m.on_event(down("Ctrl"));
+    m.on_event(down("Alt"));
+    assert_eq!(m.on_event(RawEvent::Other), None);
+    assert_eq!(m.on_event(up("Alt")), None);
+    assert_eq!(m.on_event(up("Ctrl")), None);
+    // A clean press afterwards still works.
+    m.on_event(down("Ctrl"));
+    assert_eq!(m.on_event(up("Ctrl")), Some("ctrl".into()));
+}
+
+#[test]
+fn other_does_not_disturb_normal_chords_or_capture() {
+    let mut m = Matcher::new(vec![("a".into(), c("Ctrl+F2"))]);
+    m.on_event(down("Ctrl"));
+    m.on_event(RawEvent::Other);
+    assert_eq!(m.on_event(down("F2")), Some("a".into()));
+
+    let mut cap = Capture::default();
+    assert_eq!(cap.on_event(RawEvent::Other), CaptureState::Idle);
+    cap.on_event(down("Ctrl"));
+    assert_eq!(cap.on_event(RawEvent::Other), CaptureState::Holding(c("Ctrl")));
+}
+
+#[test]
+fn matcher_reset_clears_held_state() {
+    let mut m = Matcher::new(vec![("a".into(), c("Ctrl+F2"))]);
+    m.on_event(down("Ctrl"));
+    m.on_event(down("F2"));
+    m.reset();
+    // Ctrl's up was lost (e.g. hook reinstall): F2 alone must not fire now.
+    assert_eq!(m.on_event(down("F2")), None);
+    m.on_event(up("F2"));
+    m.on_event(down("Ctrl"));
+    assert_eq!(m.on_event(down("F2")), Some("a".into()));
+}
+
+#[test]
+fn capture_reset_clears_state() {
+    let mut cap = Capture::default();
+    cap.on_event(down("Ctrl"));
+    cap.reset();
+    assert_eq!(cap.on_event(down("F2")), CaptureState::Holding(c("F2")));
+    assert_eq!(cap.on_event(up("F2")), CaptureState::Done(c("F2")));
+}
+
+#[test]
+fn parse_bindings_skips_bad_and_empty() {
+    let input = vec![
+        ("start".to_string(), "Ctrl+F2".to_string()),
+        ("stop".to_string(), "Ctrl+Nope".to_string()),
+        ("pause".to_string(), "".to_string()),
+        ("save".to_string(), "Mouse4".to_string()),
+    ];
+    let (ok, errors) = parse_bindings(input);
+    let names: Vec<&str> = ok.iter().map(|(a, _)| a.as_str()).collect();
+    assert_eq!(names, ["save", "start"]); // sorted by action
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].0, "stop");
+    assert!(errors[0].1.contains("Nope"), "{:?}", errors[0]);
+}

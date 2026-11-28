@@ -364,10 +364,70 @@ impl Chord {
     }
 }
 
+/// One event from the low-level hooks. `Down`/`Up` carry the raw VK (left and
+/// right modifier variants are tracked separately and normalised here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawEvent {
     Down(Input),
     Up(Input),
+    /// Input that cannot be bound but counts as "something else was pressed"
+    /// (left/right mouse button down, wheel): disarms modifier-only chords.
+    Other,
+}
+
+/// Raw (left/right distinct) held inputs, reporting changes of the normalised
+/// input: LCtrl down, RCtrl down, LCtrl up leaves Ctrl held.
+#[derive(Debug, Default)]
+struct Held {
+    raw: BTreeSet<Input>,
+}
+
+impl Held {
+    /// The normalised input that became held, or `None` (repeat, or the other
+    /// side of the same modifier was already down).
+    fn press(&mut self, raw: Input) -> Option<Input> {
+        let n = raw.normalized();
+        let was_held = self.is_held(n);
+        (self.raw.insert(raw) && !was_held).then_some(n)
+    }
+
+    /// The normalised input that was released, or `None` (not held, or the
+    /// other side is still down).
+    fn release(&mut self, raw: Input) -> Option<Input> {
+        let n = raw.normalized();
+        (self.raw.remove(&raw) && !self.is_held(n)).then_some(n)
+    }
+
+    fn is_held(&self, n: Input) -> bool {
+        self.raw.iter().any(|r| r.normalized() == n)
+    }
+
+    fn clear(&mut self) {
+        self.raw.clear();
+    }
+}
+
+/// Parse a saved `action -> chord string` map. Empty strings (unbound) are
+/// skipped silently; strings that fail to parse are returned as
+/// `(action, error)` so the caller can log them, and never stop the other
+/// bindings from working. Output is sorted by action name.
+pub fn parse_bindings(
+    map: impl IntoIterator<Item = (String, String)>,
+) -> (Vec<(String, Chord)>, Vec<(String, String)>) {
+    let mut ok = Vec::new();
+    let mut errors = Vec::new();
+    for (action, s) in map {
+        if s.trim().is_empty() {
+            continue;
+        }
+        match Chord::parse(&s) {
+            Ok(chord) => ok.push((action, chord)),
+            Err(e) => errors.push((action, format!("{s:?}: {e}"))),
+        }
+    }
+    ok.sort_by(|a, b| a.0.cmp(&b.0));
+    errors.sort();
+    (ok, errors)
 }
 
 struct Binding {
@@ -380,7 +440,9 @@ struct Binding {
 /// Turns raw input events into fired actions.
 pub struct Matcher {
     bindings: Vec<Binding>,
+    /// Normalised held inputs.
     held: BTreeSet<Input>,
+    raw: Held,
 }
 
 impl Matcher {
@@ -396,13 +458,38 @@ impl Matcher {
                 })
                 .collect(),
             held: BTreeSet::new(),
+            raw: Held::default(),
+        }
+    }
+
+    /// Forget everything held (after a hook reinstall or a capture, when
+    /// up-events may have been missed).
+    pub fn reset(&mut self) {
+        self.held.clear();
+        self.raw.clear();
+        for b in &mut self.bindings {
+            b.flag = false;
         }
     }
 
     pub fn on_event(&mut self, ev: RawEvent) -> Option<String> {
         match ev {
-            RawEvent::Down(i) => self.down(i.normalized()),
-            RawEvent::Up(i) => self.up(i.normalized()),
+            RawEvent::Down(raw) => {
+                let i = self.raw.press(raw)?;
+                self.down(i)
+            }
+            RawEvent::Up(raw) => {
+                let i = self.raw.release(raw)?;
+                self.up(i)
+            }
+            RawEvent::Other => {
+                for b in &mut self.bindings {
+                    if b.chord.is_modifier_only() {
+                        b.flag = false;
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -475,21 +562,27 @@ pub enum CaptureState {
 /// once every input has been released.
 #[derive(Debug, Default)]
 pub struct Capture {
-    held: BTreeSet<Input>,
+    raw: Held,
     union: BTreeSet<Input>,
 }
 
 impl Capture {
+    pub fn reset(&mut self) {
+        self.raw.clear();
+        self.union.clear();
+    }
+
     pub fn on_event(&mut self, ev: RawEvent) -> CaptureState {
         match ev {
-            RawEvent::Down(i) => {
-                let i = i.normalized();
-                self.held.insert(i);
-                self.union.insert(i);
+            RawEvent::Down(raw) => {
+                if let Some(i) = self.raw.press(raw) {
+                    self.union.insert(i);
+                }
             }
-            RawEvent::Up(i) => {
-                self.held.remove(&i.normalized());
+            RawEvent::Up(raw) => {
+                self.raw.release(raw);
             }
+            RawEvent::Other => {}
         }
         if self.union.is_empty() {
             return CaptureState::Idle;
@@ -497,7 +590,7 @@ impl Capture {
         let chord = Chord {
             keys: self.union.clone(),
         };
-        if self.held.is_empty() {
+        if self.raw.raw.is_empty() {
             self.union.clear();
             CaptureState::Done(chord)
         } else {
