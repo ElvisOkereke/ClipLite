@@ -407,13 +407,16 @@ impl Held {
     }
 }
 
+/// `(parsed bindings, (action, error) for each string that failed to parse)`.
+pub type ParsedBindings = (Vec<(String, Chord)>, Vec<(String, String)>);
+
 /// Parse a saved `action -> chord string` map. Empty strings (unbound) are
 /// skipped silently; strings that fail to parse are returned as
 /// `(action, error)` so the caller can log them, and never stop the other
 /// bindings from working. Output is sorted by action name.
 pub fn parse_bindings(
     map: impl IntoIterator<Item = (String, String)>,
-) -> (Vec<(String, Chord)>, Vec<(String, String)>) {
+) -> ParsedBindings {
     let mut ok = Vec::new();
     let mut errors = Vec::new();
     for (action, s) in map {
@@ -465,10 +468,23 @@ impl Matcher {
     /// Forget everything held (after a hook reinstall or a capture, when
     /// up-events may have been missed).
     pub fn reset(&mut self) {
+        self.reset_held(std::iter::empty());
+    }
+
+    /// Reset, then treat `raw_held` (e.g. read from the OS key state after a
+    /// hook reinstall) as already held, without firing anything: a chord that
+    /// is fully held counts as already fired, and modifier-only chords are
+    /// not armed.
+    pub fn reset_held(&mut self, raw_held: impl IntoIterator<Item = Input>) {
         self.held.clear();
         self.raw.clear();
+        for raw in raw_held {
+            if let Some(i) = self.raw.press(raw) {
+                self.held.insert(i);
+            }
+        }
         for b in &mut self.bindings {
-            b.flag = false;
+            b.flag = !b.chord.is_modifier_only() && b.chord.keys.is_subset(&self.held);
         }
     }
 

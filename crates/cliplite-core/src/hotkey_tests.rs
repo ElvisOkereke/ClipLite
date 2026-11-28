@@ -274,3 +274,19 @@ fn parse_bindings_skips_bad_and_empty() {
     assert_eq!(errors[0].0, "stop");
     assert!(errors[0].1.contains("Nope"), "{:?}", errors[0]);
 }
+
+#[test]
+fn reset_held_resyncs_without_firing() {
+    let mut m = Matcher::new(vec![("a".into(), c("Ctrl+F2")), ("mo".into(), c("Ctrl+Alt"))]);
+    // After a hook reinstall the OS reports LCtrl + F2 held: no fire now...
+    m.reset_held([vk(VK_LCONTROL), key("F2")]);
+    // ...and not on repeats of the held chord.
+    assert_eq!(m.on_event(down("F2")), None);
+    m.on_event(up("F2"));
+    // Ctrl is still held: pressing F2 again fires.
+    assert_eq!(m.on_event(down("F2")), Some("a".into()));
+    // A modifier-only chord completed only by resync is not armed.
+    let mut m = Matcher::new(vec![("mo".into(), c("Ctrl+Alt"))]);
+    m.reset_held([vk(VK_LCONTROL), vk(VK_LMENU)]);
+    assert_eq!(m.on_event(RawEvent::Up(vk(VK_LMENU))), None);
+}
