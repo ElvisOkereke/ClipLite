@@ -71,6 +71,7 @@ pub fn run() {
             commands::cancel_hotkey_capture,
             commands::describe_hotkeys,
             commands::default_hotkeys,
+            commands::chord_from_web,
         ])
         .setup(|app| {
             library::init_db().expect("Failed to initialize database");

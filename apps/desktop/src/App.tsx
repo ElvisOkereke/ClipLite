@@ -6,7 +6,7 @@ import { SettingsView } from "./components/SettingsView";
 
 import { getSettings, saveSettings, applyHotkeys, detectHwEncoder, applyCaptureSettings } from "./api";
 import type { Settings, View } from "./types";
-import { firedMessage, elevatedNoticeText, type HotkeyFiredEvent } from "./hotkeys";
+import { firedMessage, elevatedNoticeText, hotkeysChanged, type HotkeyFiredEvent } from "./hotkeys";
 
 const DEFAULT_SETTINGS: Settings = {
   output_dir: "",
@@ -147,9 +147,12 @@ export default function App() {
     if (CAPTURE_KEYS.some(k => old[k] !== s[k])) {
       await applyCaptureSettings().catch(e => setStatus(`Could not apply capture settings: ${e}`));
     }
-    // Re-register hotkeys with the new bindings — only here, not on every
-    // incremental save, so rapid RecorderView changes don't spam reregister.
-    await applyHotkeys().catch(console.error);
+    // Restart the hotkey listener only when the bindings changed (a restart
+    // drops held-key state and briefly removes the hooks), and only here, not
+    // on every incremental save.
+    if (hotkeysChanged(old.hotkeys, s.hotkeys)) {
+      await applyHotkeys().catch(console.error);
+    }
     setStatus("Settings saved.");
     setTimeout(() => setStatus(""), 2000);
   }, []);

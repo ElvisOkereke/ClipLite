@@ -789,6 +789,47 @@ pub fn describe_hotkeys(
     describe_bindings(&hotkeys)
 }
 
+/// A chord recorded by the WebView (compatibility mode).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WebChordOut {
+    pub canonical: String,
+    pub display: String,
+}
+
+/// `KeyboardEvent.code` names (plus `Mouse3`/`Mouse4`/`Mouse5` for mouse
+/// buttons) -> the same canonical chord the hook would have recorded. Codes
+/// with no binding are dropped; an empty result is an error.
+pub fn chord_from_web_codes(codes: &[String]) -> Result<WebChordOut, String> {
+    use cliplite_core::hotkey::{Chord, Input, MouseButton};
+    let inputs = codes.iter().filter_map(|c| {
+        Input::from_web_code(c).or(match c.as_str() {
+            "Mouse3" => Some(Input::Mouse(MouseButton::Middle)),
+            "Mouse4" => Some(Input::Mouse(MouseButton::X1)),
+            "Mouse5" => Some(Input::Mouse(MouseButton::X2)),
+            _ => None,
+        })
+    });
+    let chord = Chord::from_inputs(inputs);
+    if chord.is_empty() {
+        return Err(format!("no bindable key in {codes:?}"));
+    }
+    Ok(WebChordOut { canonical: chord.to_canonical(), display: chord.display() })
+}
+
+/// Convert a chord the WebView recorded (compatibility mode: the hook sent no
+/// capture events) to canonical form. Every call means the fallback was used,
+/// so it is logged as a warning for the HIL kit to find.
+#[tauri::command]
+pub fn chord_from_web(codes: Vec<String>) -> Result<WebChordOut, String> {
+    let out = chord_from_web_codes(&codes);
+    match &out {
+        Ok(c) => log::warn!("[hotkeys] capture fallback: recorded in WebView compatibility mode {codes:?} -> {}",
+                            c.canonical),
+        Err(e) => log::warn!("[hotkeys] capture fallback: {e}"),
+    }
+    out
+}
+
 /// The factory bindings (`Settings::default`), for the UI's Reset button.
 #[tauri::command]
 pub fn default_hotkeys() -> std::collections::HashMap<String, String> {
@@ -1055,6 +1096,24 @@ mod describe_tests {
         });
         assert!(!d["stop"].valid && d["stop"].display.is_empty());
         assert!(!d["pause"].valid);
+    }
+
+    fn codes(c: &[&str]) -> Vec<String> {
+        c.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn chord_from_web_codes_builds_canonical_chord() {
+        assert_eq!(chord_from_web_codes(&codes(&["ControlRight", "AltLeft", "F12"])), Ok(WebChordOut {
+            canonical: "Ctrl+Alt+F12".into(), display: "Ctrl + Alt + F12".into(),
+        }));
+        assert_eq!(chord_from_web_codes(&codes(&["ControlLeft", "Backquote"])).unwrap().canonical, "Ctrl+Backquote");
+        assert_eq!(chord_from_web_codes(&codes(&["ShiftLeft", "Mouse4"])).unwrap().canonical, "Shift+Mouse4");
+        assert_eq!(chord_from_web_codes(&codes(&["MetaLeft", "Digit1"])).unwrap().canonical, "Win+1");
+        // Unmappable codes are dropped; nothing usable is an error.
+        assert_eq!(chord_from_web_codes(&codes(&["Unidentified", "KeyK"])).unwrap().canonical, "K");
+        assert!(chord_from_web_codes(&codes(&["Unidentified"])).is_err());
+        assert!(chord_from_web_codes(&[]).is_err());
     }
 
     #[test]

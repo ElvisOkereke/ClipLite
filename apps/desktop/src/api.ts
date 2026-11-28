@@ -69,3 +69,6 @@ export const describeHotkeys = (hotkeys: Record<string, string>) =>
 export const defaultHotkeys = () => invoke<Record<string, string>>("default_hotkeys");
 export const getHotkeyStatus = () =>
   invoke<{ hotkey_status: HotkeyStatus | null }>("get_debug_state").then(s => s.hotkey_status);
+/** Canonical chord from WebView `KeyboardEvent.code`s (capture compatibility mode; logged in Rust). */
+export const chordFromWeb = (codes: string[]) =>
+  invoke<{ canonical: string; display: string }>("chord_from_web", { codes });
