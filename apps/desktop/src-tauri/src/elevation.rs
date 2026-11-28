@@ -37,6 +37,38 @@ impl ElevationNotice {
     }
 }
 
+/// Whether a process runs with an elevated token. `Unknown` never raises a banner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Elevation {
+    Elevated,
+    NotElevated,
+    Unknown,
+}
+
+/// Why a token probe failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrKind {
+    AccessDenied,
+    Other,
+}
+
+/// Pure decision rule. `open_ok`: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+/// succeeded. `token`: the token probe, `Ok(TokenIsElevated)` or why it failed.
+/// Only a successful token read, or an access-denied token open on a process we
+/// *could* open, counts as a verdict; everything else (protected, SYSTEM,
+/// other-user, exited processes) is `Unknown`.
+pub fn classify(open_ok: bool, token: Result<bool, ErrKind>) -> Elevation {
+    if !open_ok {
+        return Elevation::Unknown;
+    }
+    match token {
+        Ok(true) => Elevation::Elevated,
+        Ok(false) => Elevation::NotElevated,
+        Err(ErrKind::AccessDenied) => Elevation::Elevated,
+        Err(ErrKind::Other) => Elevation::Unknown,
+    }
+}
+
 #[cfg(windows)]
 pub fn spawn_poller(app: tauri::AppHandle) {
     use std::time::Duration;
@@ -45,15 +77,25 @@ pub fn spawn_poller(app: tauri::AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("elevation-poll".into())
         .spawn(move || {
-            let self_elevated = win::self_elevated();
-            if self_elevated {
-                return; // an elevated ClipLite is not blocked; nothing to say
+            match win::self_elevation() {
+                Elevation::NotElevated => {}
+                Elevation::Elevated => return, // an elevated ClipLite is not blocked
+                Elevation::Unknown => {
+                    log::warn!("could not read ClipLite's own token; elevation notices disabled");
+                    return;
+                }
             }
+            let self_elevated = false;
             let mut notice = ElevationNotice::new();
             loop {
                 std::thread::sleep(Duration::from_secs(2));
                 if let Some(fg) = win::foreground() {
-                    if let Some(exe) = notice.observe(fg.elevated, self_elevated, &fg.exe) {
+                    if fg.elevation == Elevation::Unknown {
+                        log::debug!("foreground elevation unknown ({}); no notice", fg.exe);
+                        continue;
+                    }
+                    let elevated = fg.elevation == Elevation::Elevated;
+                    if let Some(exe) = notice.observe(elevated, self_elevated, &fg.exe) {
                         log::info!("elevated foreground app: {exe}");
                         app.emit("elevated-foreground", serde_json::json!({ "exe": exe })).ok();
                     }
@@ -70,8 +112,9 @@ pub fn spawn_poller(_app: tauri::AppHandle) {}
 
 #[cfg(windows)]
 mod win {
+    use super::{classify, Elevation, ErrKind};
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE};
     use windows::Win32::Security::{
         GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
     };
@@ -82,11 +125,12 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     pub struct Foreground {
-        pub elevated: bool,
+        pub elevation: Elevation,
         pub exe: String,
     }
 
-    unsafe fn token_elevated(token: HANDLE) -> Option<bool> {
+    /// Reads `TokenIsElevated`; a failure is an error, never "not elevated".
+    unsafe fn token_elevated(token: HANDLE) -> Result<bool, ErrKind> {
         let mut elev = TOKEN_ELEVATION::default();
         let mut ret = 0u32;
         GetTokenInformation(
@@ -96,26 +140,30 @@ mod win {
             std::mem::size_of::<TOKEN_ELEVATION>() as u32,
             &mut ret,
         )
-        .ok()?;
-        Some(elev.TokenIsElevated != 0)
+        .map_err(|_| ErrKind::Other)?;
+        Ok(elev.TokenIsElevated != 0)
     }
 
-    pub fn self_elevated() -> bool {
-        unsafe {
-            let mut token = HANDLE::default();
-            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
-                return false;
+    /// Open `proc`'s token and read elevation, mapping errors for `classify`.
+    unsafe fn probe(proc: HANDLE) -> Result<bool, ErrKind> {
+        let mut token = HANDLE::default();
+        match OpenProcessToken(proc, TOKEN_QUERY, &mut token) {
+            Ok(()) => {
+                let r = token_elevated(token);
+                let _ = CloseHandle(token);
+                r
             }
-            let r = token_elevated(token).unwrap_or(false);
-            let _ = CloseHandle(token);
-            r
+            Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => Err(ErrKind::AccessDenied),
+            Err(_) => Err(ErrKind::Other),
         }
     }
 
+    pub fn self_elevation() -> Elevation {
+        unsafe { classify(true, probe(GetCurrentProcess())) }
+    }
+
     /// Foreground process info. `None` when there is no foreground window or
-    /// it is ClipLite itself. If the process can't be opened at all (access
-    /// denied) it is treated as elevated: a normal-integrity process can open
-    /// any same-user, non-protected process for limited query.
+    /// it is ClipLite itself.
     pub fn foreground() -> Option<Foreground> {
         unsafe {
             let hwnd = GetForegroundWindow();
@@ -128,7 +176,10 @@ mod win {
                 return None;
             }
             let Ok(proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-                return Some(Foreground { elevated: true, exe: String::new() });
+                return Some(Foreground {
+                    elevation: classify(false, Err(ErrKind::Other)),
+                    exe: format!("pid {pid}"),
+                });
             };
             let mut exe = String::new();
             let mut buf = [0u16; 520];
@@ -137,16 +188,9 @@ mod win {
                 let path = String::from_utf16_lossy(&buf[..len as usize]);
                 exe = path.rsplit(['\\', '/']).next().unwrap_or("").to_string();
             }
-            let mut token = HANDLE::default();
-            let elevated = if OpenProcessToken(proc, TOKEN_QUERY, &mut token).is_ok() {
-                let r = token_elevated(token).unwrap_or(false);
-                let _ = CloseHandle(token);
-                r
-            } else {
-                true // token not openable from a normal process: elevated/protected
-            };
+            let elevation = classify(true, probe(proc));
             let _ = CloseHandle(proc);
-            Some(Foreground { elevated, exe })
+            Some(Foreground { elevation, exe })
         }
     }
 }
@@ -190,5 +234,27 @@ mod tests {
         let mut n = ElevationNotice::new();
         assert_eq!(n.observe(true, false, ""), Some("An elevated app".into()));
         assert_eq!(n.observe(true, false, "  "), None);
+    }
+
+    #[test]
+    fn classify_open_failed_is_unknown() {
+        assert_eq!(classify(false, Ok(true)), Elevation::Unknown);
+        assert_eq!(classify(false, Err(ErrKind::AccessDenied)), Elevation::Unknown);
+    }
+
+    #[test]
+    fn classify_token_access_denied_is_elevated() {
+        assert_eq!(classify(true, Err(ErrKind::AccessDenied)), Elevation::Elevated);
+    }
+
+    #[test]
+    fn classify_other_token_error_is_unknown() {
+        assert_eq!(classify(true, Err(ErrKind::Other)), Elevation::Unknown);
+    }
+
+    #[test]
+    fn classify_token_value() {
+        assert_eq!(classify(true, Ok(true)), Elevation::Elevated);
+        assert_eq!(classify(true, Ok(false)), Elevation::NotElevated);
     }
 }

@@ -12,7 +12,7 @@ Users reported "hotkeys don't work in fullscreen." The original design was a low
 
 1. **Elevated games: 1/60.** In the baseline hotkey matrix with the game running as administrator, ClipLite (medium integrity) saw one press in 60, in every display mode, windowed included. A normal game: 60/60. This is UIPI blocking a lower-integrity hook from seeing input meant for an elevated window (baseline report, finding 4).
 2. **Own-window focus.** The hook was never invoked while ClipLite's own window had focus; debug builds hid this because DevTools took focus (baseline report, finding 5).
-3. **The owner's 2026-11-27 session.** Hooks installed, Ctrl+` bound to `replay_save`, about 2 minutes of attempts, zero `hotkey.pressed` events in the owner's app log. The keyboard layout was ruled out: Backquote maps to VK 0xC0 on both installed layouts (0x04091009 and 0x04090409). So the failure was in delivery, not in key mapping.
+3. **The owner's manual test.** Hooks installed, Ctrl+` bound to `replay_save`, a couple of minutes of attempts, zero `hotkey.pressed` events in the owner's app log from that test. The keyboard layout was ruled out: both installed keyboard layouts map Backquote to VK 0xC0. So the failure was in delivery, not in key mapping.
 4. **Design problems independent of delivery:**
    - Exact modifier equality: holding Shift or W blocked a chord.
    - Actions executed in the WebView, so a hidden or busy WebView dropped them.
@@ -28,9 +28,9 @@ Move the whole path into Rust:
   - The hook handles what `RegisterHotKey` cannot: mouse buttons, modifier-only chords, and superset matches (extra held keys don't block a chord).
 - **Dedup** across the two sources, so a chord seen by both runs the action once.
 - **Dispatcher** matches chords and hands actions to a **serial action worker** that runs them in press order and emits `hotkey-fired` for the UI. Actions no longer depend on the WebView.
-- **Watchdog reinstall:** on the input thread, (hooks are unhooked and reinstalled every 60 s and after resume from sleep or session unlock, since Windows can silently drop or stale a hook).
+- **Watchdog reinstall:** on the input thread, hooks are unhooked and reinstalled every 60 s and after resume from sleep or session unlock, since Windows can silently drop or stale a hook.
 - **Capture through the hook:** "record a shortcut" in Settings is a Rust capture mode driven by the same hook, so any chord the matcher can fire can be recorded, with conflict warnings in the UI.
-- **Elevated-foreground notice:** a separate lightweight poller thread (every 2 s) checks whether the foreground process is elevated while ClipLite is not, and emits `elevated-foreground {exe}` once per exe per session. The UI shows a dismissible banner. It is separate from the dispatcher so the dispatcher's loop stays simple (it uses a timed receive only while capturing). The wording is deliberately hedged, because shortcut survival in front of an elevated app isn't proven yet.
+- **Elevated-foreground notice:** a separate lightweight poller thread (every 2 s) checks whether the foreground process is elevated while ClipLite is not, and emits `elevated-foreground {exe}` once per exe per session. The UI shows a dismissible banner. It is separate from the dispatcher so the dispatcher's loop stays simple (it uses a timed receive only while capturing). Detection is tri-state (Elevated / NotElevated / Unknown) and only a definite Elevated verdict can raise the banner: if the foreground process can't be opened for limited query, or the token can't be read for any reason other than access denied, the result is Unknown and nothing is shown (so protected, SYSTEM, other-user and exited processes don't produce false banners or use up the one-shot). Access denied opening the token of a process we could open counts as Elevated. If ClipLite can't read its own token, notices are disabled. The wording is deliberately hedged, because shortcut survival in front of an elevated app isn't proven yet.
 
 ## Consequences and trade-offs
 
@@ -42,6 +42,6 @@ Move the whole path into Rust:
 
 - **HIL matrix 20/20** (12-cell display-mode/window-state/load grid) with the new listener.
 - **Elevated matrix** (game as administrator): the baseline was 1/60; whether `RegisterHotKey` delivers across the integrity boundary on target machines has not been measured.
-- **Owner real-game check**: the 2026-11-27 no-events failure has not been re-tested with the new build.
+- **Owner real-game check**: the no-events failure from the owner's manual test has not been re-tested with the new build.
 
 Until those runs pass, nothing here should be described as "fixed."
